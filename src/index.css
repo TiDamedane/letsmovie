@@ -224,6 +224,10 @@ a {
     both;
 }
 
+.create-step-panel {
+  animation: create-step-panel-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 .time-picker-sheet {
   animation: time-picker-sheet-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -335,6 +339,18 @@ a {
 
   to {
     transform: translateY(100%);
+  }
+}
+
+@keyframes create-step-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

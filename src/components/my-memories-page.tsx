@@ -43,6 +43,7 @@ export function MyMemoriesPage() {
                   key={activity.id}
                   activity={activity}
                   href={`#/memories/${encodeURIComponent(activity.id)}`}
+                  showStatus={false}
                 />
               ))}
             </div>

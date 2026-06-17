@@ -31,7 +31,8 @@ export type Activity = {
 export type CreateActivityInput = Pick<
   Activity,
   "title" | "note" | "location" | "date"
->;
+> &
+  Partial<Pick<Activity, "status" | "candidateMovieIds" | "selectedMovieId">>;
 
 const storageKey = "letsmovie.activities.v1";
 
@@ -88,10 +89,14 @@ export function deleteActivity(id: string) {
 
 export function createActivity(input: CreateActivityInput) {
   const activity: Activity = {
-    ...input,
     id: `activity-${Date.now()}`,
-    status: "collecting",
-    candidateMovieIds: [],
+    title: input.title,
+    note: input.note,
+    location: input.location,
+    date: input.date,
+    status: input.status ?? "collecting",
+    candidateMovieIds: input.candidateMovieIds ?? [],
+    selectedMovieId: input.selectedMovieId,
     createdAt: new Date().toISOString(),
   };
 

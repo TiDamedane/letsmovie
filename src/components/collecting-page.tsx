@@ -247,6 +247,35 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   const startRandomReveal = () => {
     if (candidateMovies.length === 0) return;
 
+    const pickDifferentMovie = (currentMovie: Movie | null) => {
+      if (candidateMovies.length <= 1 || !currentMovie) {
+        return candidateMovies[0];
+      }
+
+      const availableMovies = candidateMovies.filter(
+        (movie) => movie.id !== currentMovie.id,
+      );
+      return availableMovies[
+        Math.floor(Math.random() * availableMovies.length)
+      ];
+    };
+
+    const scheduleRevealText = () => {
+      window.setTimeout(() => setRevealStage("poster"), 380);
+      window.setTimeout(() => setRevealStage("title"), 740);
+      window.setTimeout(() => setRevealStage("credit"), 1080);
+      window.setTimeout(() => setRevealStage("action"), 1440);
+    };
+
+    const settleOnWinner = (winnerMovie: Movie) => {
+      setPreviousRevealMovie(rollingMovieRef.current);
+      setRevealMovie(winnerMovie);
+      rollingMovieRef.current = winnerMovie;
+      setRevealRollDuration(360);
+      setRevealRollStep((step) => step + 1);
+      scheduleRevealText();
+    };
+
     const winner =
       candidateMovies[Math.floor(Math.random() * candidateMovies.length)];
     setIsStartConfirmationOpen(false);
@@ -265,22 +294,25 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     const roll = () => {
       const elapsed = Date.now() - startedAt;
       if (elapsed >= 3000) {
-        setPreviousRevealMovie(rollingMovieRef.current);
-        setRevealMovie(winner);
-        rollingMovieRef.current = winner;
-        setRevealRollDuration(360);
-        setRevealRollStep((step) => step + 1);
-        window.setTimeout(() => setRevealStage("poster"), 380);
-        window.setTimeout(() => setRevealStage("title"), 740);
-        window.setTimeout(() => setRevealStage("credit"), 1080);
-        window.setTimeout(() => setRevealStage("action"), 1440);
+        if (
+          candidateMovies.length > 1 &&
+          rollingMovieRef.current?.id === winner.id
+        ) {
+          const bridgeMovie = pickDifferentMovie(rollingMovieRef.current);
+          setPreviousRevealMovie(rollingMovieRef.current);
+          setRevealMovie(bridgeMovie);
+          rollingMovieRef.current = bridgeMovie;
+          setRevealRollDuration(220);
+          setRevealRollStep((step) => step + 1);
+          window.setTimeout(() => settleOnWinner(winner), 220);
+          return;
+        }
+
+        settleOnWinner(winner);
         return;
       }
 
-      const nextMovie =
-        candidateMovies[
-          Math.floor(Math.random() * candidateMovies.length)
-        ];
+      const nextMovie = pickDifferentMovie(rollingMovieRef.current);
       const progress = elapsed / 3000;
       const delay =
         progress < 0.5

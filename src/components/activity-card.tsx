@@ -25,11 +25,13 @@ export function ActivityCard({
   animatePoster = false,
   archiveExit = false,
   href,
+  showStatus = true,
 }: {
   activity: Activity;
   animatePoster?: boolean;
   archiveExit?: boolean;
   href?: string;
+  showStatus?: boolean;
 }) {
   const selectedMovie = activity.selectedMovieId
     ? getMovieById(activity.selectedMovieId)
@@ -64,7 +66,11 @@ export function ActivityCard({
         <div className="relative z-10 flex h-full flex-col">
           <div className="flex items-start">
             <div>
-              <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold tracking-[0.12em] text-[#f8f4ed]/80">
+              <div
+                className={`mb-3 items-center gap-2 text-[10px] font-semibold tracking-[0.12em] text-[#f8f4ed]/80 ${
+                  showStatus ? "flex" : "hidden"
+                }`}
+              >
                 <span
                   className={`size-[7px] rounded-full ${
                     activity.status === "selected"
