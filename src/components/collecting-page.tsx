@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -32,6 +31,7 @@ import {
 } from "@/lib/activity-store";
 import {
   getMovieById,
+  saveMovie,
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
@@ -112,6 +112,9 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   const [isPageClosing, setIsPageClosing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Movie[]>([]);
+  const [isSearchingMovies, setIsSearchingMovies] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [displayedSearchResults, setDisplayedSearchResults] = useState<Movie[]>(
     [],
   );
@@ -123,13 +126,6 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   const recommendationPanelRef = useRef<HTMLDivElement>(null);
   const rollingMovieRef = useRef<Movie | null>(null);
 
-  const searchResults = useMemo(
-    () =>
-      submittedQuery.trim() && submittedQuery === searchQuery
-        ? searchMovies(submittedQuery)
-        : [],
-    [searchQuery, submittedQuery],
-  );
   const areSearchResultsVisible = searchResults.length > 0;
   const selectedMovieCount = selectedMovieIds.length;
   const isSelectionComplete = selectedMovieCount === 3;
@@ -152,6 +148,40 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       return [...selectedIds, movieId];
     });
   };
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function runSearch() {
+      if (!submittedQuery.trim() || submittedQuery !== searchQuery.trim()) {
+        setSearchResults([]);
+        setSearchError("");
+        setIsSearchingMovies(false);
+        return;
+      }
+
+      setIsSearchingMovies(true);
+      setSearchError("");
+
+      try {
+        const movies = await searchMovies(submittedQuery);
+        if (isActive) setSearchResults(movies);
+      } catch {
+        if (isActive) {
+          setSearchResults([]);
+          setSearchError("搜索暂时失败了，稍后再试");
+        }
+      } finally {
+        if (isActive) setIsSearchingMovies(false);
+      }
+    }
+
+    runSearch();
+
+    return () => {
+      isActive = false;
+    };
+  }, [searchQuery, submittedQuery]);
 
   useEffect(() => {
     if (areSearchResultsVisible) {
@@ -220,7 +250,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setSubmittedQuery(searchQuery);
+    setSubmittedQuery(searchQuery.trim());
   };
 
   const toggleRecommendedMovie = (movie: Movie) => {
@@ -234,6 +264,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         )
       : [...candidateMovies, recommendedMovie];
 
+    if (!isSelected) saveMovie(recommendedMovie);
     setCandidateMovies(nextMovies);
     setActivity(
       updateActivity(activityId, {
@@ -973,7 +1004,12 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                   <input
                     type="text"
                     value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
+                    onChange={(event) => {
+                      setSearchQuery(event.target.value);
+                      if (event.target.value !== submittedQuery) {
+                        setSubmittedQuery("");
+                      }
+                    }}
                     placeholder="搜索电影、导演、演员"
                     autoFocus
                     className="h-11 w-full rounded-[14px] border border-transparent bg-[#25282d] pl-11 pr-11 text-[13px] text-[#f8f4ed]/90 outline-none placeholder:text-[#f8f4ed]/42 focus:bg-[#292c31]"
@@ -1027,7 +1063,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                               {movie.title}
                             </h3>
                             <p className="mt-0.5 pr-8 text-[10px] leading-4 text-[#f8f4ed]/58">
-                              {movie.director}
+                              {movie.director || "导演信息待补全"}
                             </p>
                           </div>
                           <button
@@ -1050,6 +1086,14 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                       );
                     })}
                   </div>
+                ) : isSearchingMovies ? (
+                  <p className="pb-[max(24px,env(safe-area-inset-bottom))] pt-5 text-center text-[13px] text-[#f8f4ed]/45">
+                    正在搜索影片
+                  </p>
+                ) : searchError ? (
+                  <p className="pb-[max(24px,env(safe-area-inset-bottom))] pt-5 text-center text-[13px] text-[#f8f4ed]/45">
+                    {searchError}
+                  </p>
                 ) : submittedQuery ? (
                   <p className="pb-[max(24px,env(safe-area-inset-bottom))] pt-5 text-center text-[13px] text-[#f8f4ed]/45">
                     没有找到相关影片

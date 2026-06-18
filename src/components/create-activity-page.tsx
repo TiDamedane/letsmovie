@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ArrowLeft,
   CalendarDays,
   Check,
   MapPin,
+  Plus,
   Search,
   X,
 } from "lucide-react";
 import { createActivity } from "@/lib/activity-store";
 import {
+  saveMovies,
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
@@ -150,6 +152,9 @@ export function CreateActivityPage() {
   const [selectedMovies, setSelectedMovies] = useState<Movie[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Movie[]>([]);
+  const [isSearchingMovies, setIsSearchingMovies] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
   const [isTimePickerClosing, setIsTimePickerClosing] = useState(false);
   const [initialYear, initialMonth, initialDay] = date.split(".");
@@ -160,14 +165,6 @@ export function CreateActivityPage() {
   const dayOptions = getDayOptions(draftYear, draftMonth);
   const isDetailsComplete = Boolean(title.trim() && location.trim());
   const canCreateActivity = selectedMovies.length > 0;
-
-  const searchResults = useMemo(
-    () =>
-      submittedQuery.trim() && submittedQuery === searchQuery
-        ? searchMovies(submittedQuery)
-        : [],
-    [searchQuery, submittedQuery],
-  );
 
   const openTimePicker = () => {
     const [year, month, day] = date.split(".");
@@ -214,6 +211,40 @@ export function CreateActivityPage() {
     setSubmittedQuery(searchQuery.trim());
   };
 
+  useEffect(() => {
+    let isActive = true;
+
+    async function runSearch() {
+      if (!submittedQuery.trim() || submittedQuery !== searchQuery.trim()) {
+        setSearchResults([]);
+        setSearchError("");
+        setIsSearchingMovies(false);
+        return;
+      }
+
+      setIsSearchingMovies(true);
+      setSearchError("");
+
+      try {
+        const movies = await searchMovies(submittedQuery);
+        if (isActive) setSearchResults(movies);
+      } catch {
+        if (isActive) {
+          setSearchResults([]);
+          setSearchError("搜索暂时失败了，稍后再试");
+        }
+      } finally {
+        if (isActive) setIsSearchingMovies(false);
+      }
+    }
+
+    runSearch();
+
+    return () => {
+      isActive = false;
+    };
+  }, [searchQuery, submittedQuery]);
+
   const toggleMovie = (movie: Movie) => {
     setSelectedMovies((movies) => {
       const isSelected = movies.some(
@@ -236,6 +267,7 @@ export function CreateActivityPage() {
     }
 
     const selectedMovieIds = selectedMovies.map((movie) => movie.id);
+    saveMovies(selectedMovies);
     const activity = createActivity({
       title: title.trim(),
       note: note.trim(),
@@ -284,7 +316,11 @@ export function CreateActivityPage() {
           </button>
         </header>
 
-        <div className="relative z-10 flex min-h-[calc(100dvh-88px)] flex-col px-7 pb-[max(22px,env(safe-area-inset-bottom))] pt-10">
+        <div
+          className={`relative z-10 flex min-h-[calc(100dvh-88px)] flex-col px-7 pb-[max(22px,env(safe-area-inset-bottom))] ${
+            step === "movies" ? "pt-0" : "pt-10"
+          }`}
+        >
           {step === "details" && (
             <div key="details" className="create-step-panel flex flex-1 flex-col">
               <div>
@@ -425,7 +461,7 @@ export function CreateActivityPage() {
 
           {step === "movies" && selectionMode && (
             <div key="movies" className="create-step-panel flex flex-1 flex-col pt-2">
-              <form onSubmit={submitSearch} className="relative mt-6">
+              <form onSubmit={submitSearch} className="relative mt-2">
                 <Search
                   aria-hidden="true"
                   className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[#f8f4ed]/48"
@@ -470,7 +506,7 @@ export function CreateActivityPage() {
                       return (
                         <article
                           key={movie.id}
-                          className={`search-result-enter relative rounded-[16px] transition duration-200 ${
+                          className={`search-result-enter relative min-w-0 rounded-[16px] transition-colors duration-200 ${
                             isSelected ? "bg-[#8b1e3f]/24" : "bg-transparent"
                           }`}
                         >
@@ -482,11 +518,7 @@ export function CreateActivityPage() {
                                 ? `取消选择${movie.title}`
                                 : `选择${movie.title}`
                             }
-                            className={`block w-full rounded-[16px] border text-left transition duration-200 active:scale-[0.98] ${
-                              isSelected
-                                ? "border-[#a52e4e]"
-                                : "border-transparent"
-                            }`}
+                            className="block w-full rounded-[16px] text-left transition duration-200 active:scale-[0.98]"
                           >
                             <img
                               src={movie.src}
@@ -497,23 +529,33 @@ export function CreateActivityPage() {
                               <span className="block text-[12px] leading-[17px] text-[#f8f4ed]">
                                 {movie.title}
                               </span>
-                              <span className="mt-0.5 block text-[10px] leading-4 text-[#f8f4ed]/58">
-                                {movie.director}
+                              <span className="mt-0.5 block pr-8 text-[10px] leading-4 text-[#f8f4ed]/58">
+                                {movie.director || "导演信息待补全"}
                               </span>
                             </span>
                           </button>
                           <span
                             aria-hidden="true"
-                            className={`absolute bottom-[46px] right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)] transition duration-200 ${
-                              isSelected ? "scale-100 opacity-100" : "scale-90 opacity-0"
-                            }`}
+                            className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)] transition duration-200"
                           >
-                            <Check className="size-4" strokeWidth={2.2} />
+                            {isSelected ? (
+                              <Check className="size-4" strokeWidth={2.2} />
+                            ) : (
+                              <Plus className="size-4" strokeWidth={2.2} />
+                            )}
                           </span>
                         </article>
                       );
                     })}
                   </div>
+                ) : isSearchingMovies ? (
+                  <p className="pt-16 text-center text-[13px] text-[#f8f4ed]/45">
+                    正在搜索影片
+                  </p>
+                ) : searchError ? (
+                  <p className="pt-16 text-center text-[13px] text-[#f8f4ed]/45">
+                    {searchError}
+                  </p>
                 ) : submittedQuery ? (
                   <p className="pt-16 text-center text-[13px] text-[#f8f4ed]/45">
                     没有找到相关影片
