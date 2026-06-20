@@ -14,6 +14,7 @@ import {
   type Movie,
 } from "@/lib/movie-database";
 import { createParticipantId, saveParticipant } from "@/lib/participant-store";
+import { createRemoteActivityBundle } from "@/lib/supabase-activity";
 import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
 
 const titleLimit = 30;
@@ -158,6 +159,7 @@ export function CreateActivityPage() {
   const [searchError, setSearchError] = useState("");
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
   const [isTimePickerClosing, setIsTimePickerClosing] = useState(false);
+  const [isCreatingActivity, setIsCreatingActivity] = useState(false);
   const [initialYear, initialMonth, initialDay] = date.split(".");
   const [draftYear, setDraftYear] = useState(initialYear);
   const [draftMonth, setDraftMonth] = useState(initialMonth);
@@ -165,7 +167,7 @@ export function CreateActivityPage() {
   const [isClosing, setIsClosing] = useState(false);
   const dayOptions = getDayOptions(draftYear, draftMonth);
   const isDetailsComplete = Boolean(title.trim() && location.trim());
-  const canCreateActivity = selectedMovies.length > 0;
+  const canCreateActivity = selectedMovies.length > 0 && !isCreatingActivity;
 
   const openTimePicker = () => {
     const [year, month, day] = date.split(".");
@@ -262,11 +264,12 @@ export function CreateActivityPage() {
     });
   };
 
-  const submitActivity = () => {
+  const submitActivity = async () => {
     if (!isDetailsComplete || !selectionMode || selectedMovies.length === 0) {
       return;
     }
 
+    setIsCreatingActivity(true);
     const selectedMovieIds = selectedMovies.map((movie) => movie.id);
     saveMovies(selectedMovies);
     const activity = createActivity({
@@ -279,15 +282,31 @@ export function CreateActivityPage() {
       selectedMovieId:
         selectionMode === "confirmed" ? selectedMovies[0].id : undefined,
     });
-    saveParticipant(activity.id, {
+    const hostParticipant = {
       participantId: createParticipantId(),
       nickname: "小杨",
       avatarUrl: hostImage,
-    });
+    };
+    saveParticipant(activity.id, hostParticipant);
+
+    try {
+      await createRemoteActivityBundle({
+        activity,
+        host: hostParticipant,
+        movies: selectedMovies,
+      });
+    } catch {
+      // LocalStorage remains the fallback when cloud sync is unavailable.
+    }
 
     if (selectionMode === "confirmed") {
       window.sessionStorage.setItem(
         `letsmovie.activity-poster-reveal.${activity.id}`,
+        "pending",
+      );
+    } else {
+      window.sessionStorage.setItem(
+        `letsmovie.invite-prompt.${activity.id}`,
         "pending",
       );
     }
@@ -588,7 +607,7 @@ export function CreateActivityPage() {
                   disabled={!canCreateActivity}
                   className="create-activity-button h-14 w-full rounded-[16px] text-[17px] font-medium text-[#f8f4ed] shadow-[0_4px_16px_rgba(0,0,0,0.15)] transition active:scale-[0.985]"
                 >
-                  创建观影局
+                  {isCreatingActivity ? "创建中" : "创建观影局"}
                 </button>
               </div>
             </div>

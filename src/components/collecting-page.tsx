@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -14,6 +15,7 @@ import {
   Heart,
   MapPin,
   MoreHorizontal,
+  Popcorn,
   Plus,
   Search,
   Square,
@@ -28,6 +30,7 @@ import {
   deleteActivity,
   getActivity,
   getNextMemoryTicketNumber,
+  saveActivity,
   updateActivity,
   type Activity,
   type ActivityMemory,
@@ -35,6 +38,7 @@ import {
 import {
   getMovieById,
   saveMovie,
+  saveMovies,
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
@@ -49,6 +53,17 @@ import {
   fetchActivityMemories,
   uploadParticipantAvatar,
 } from "@/lib/supabase-memory";
+import {
+  deleteRemoteMovie,
+  fetchRemoteActivityBundle,
+  isActivitySyncConfigured,
+  updateRemoteActivity,
+  upsertRemoteMovies,
+  upsertRemoteParticipant,
+  type ActivityParticipant,
+  type RemoteActivityBundle,
+} from "@/lib/supabase-activity";
+import { ActionDialog } from "@/components/action-dialog";
 
 const defaultAvatarPool = [
   hostImage,
@@ -140,13 +155,22 @@ function fileToDataUrl(file: File) {
   });
 }
 
-export function CollectingPage({ activityId }: { activityId: string }) {
+export function CollectingPage({
+  activityId,
+  isSharedActivity = false,
+}: {
+  activityId: string;
+  isSharedActivity?: boolean;
+}) {
   const [activity, setActivity] = useState<Activity | undefined>(() =>
     getActivity(activityId),
   );
   const [participant, setParticipant] = useState<Participant | null>(() =>
     getParticipant(activityId),
   );
+  const [remoteParticipants, setRemoteParticipants] = useState<
+    ActivityParticipant[]
+  >([]);
   const [participantName, setParticipantName] = useState("");
   const [participantAvatarFile, setParticipantAvatarFile] =
     useState<File | null>(null);
@@ -176,6 +200,10 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   const [isStartConfirmationClosing, setIsStartConfirmationClosing] =
     useState(false);
   const [isStartConfirmed, setIsStartConfirmed] = useState(false);
+  const [isInvitePromptOpen, setIsInvitePromptOpen] = useState(false);
+  const [isInvitePromptClosing, setIsInvitePromptClosing] = useState(false);
+  const [copyToastMessage, setCopyToastMessage] = useState("");
+  const [isCopyToastClosing, setIsCopyToastClosing] = useState(false);
   const [isPicking, setIsPicking] = useState(
     () => getActivity(activityId)?.status === "picking",
   );
@@ -217,9 +245,34 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     useState(0);
   const recommendationPanelRef = useRef<HTMLDivElement>(null);
   const rollingMovieRef = useRef<Movie | null>(null);
+  const inviteUrl = `${window.location.origin}${
+    window.location.pathname
+  }#/activity/${encodeURIComponent(activityId)}`;
+
+  const applyRemoteBundle = useCallback((bundle: RemoteActivityBundle) => {
+    saveActivity(bundle.activity);
+    saveMovies(bundle.movies);
+    setActivity((currentActivity) => ({
+      ...bundle.activity,
+      memories: currentActivity?.memories ?? bundle.activity.memories,
+    }));
+    setCandidateMovies(bundle.movies);
+    setRemoteParticipants(bundle.participants);
+    setIsPicking(bundle.activity.status === "picking");
+    setRevealedMovie(
+      bundle.activity.selectedMovieId
+        ? bundle.movies.find(
+            (movie) => movie.id === bundle.activity.selectedMovieId,
+          ) ??
+            getMovieById(bundle.activity.selectedMovieId) ??
+            null
+        : null,
+    );
+  }, []);
 
   useEffect(() => {
     if (!activity || participant) return;
+    if (isSharedActivity) return;
     const isLocalCreatorActivity = activity.id.startsWith("activity-");
     if (!isLocalCreatorActivity) return;
 
@@ -230,7 +283,40 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     };
     saveParticipant(activityId, creatorParticipant);
     setParticipant(creatorParticipant);
-  }, [activity, activityId, participant]);
+  }, [activity, activityId, isSharedActivity, participant]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const refreshRemoteActivity = () => {
+      fetchRemoteActivityBundle(activityId)
+        .then((bundle) => {
+          if (!isActive || !bundle) return;
+          applyRemoteBundle(bundle);
+        })
+        .catch(() => {
+          // LocalStorage remains the fallback for offline/dev mode.
+        });
+    };
+
+    refreshRemoteActivity();
+    const timer = window.setInterval(refreshRemoteActivity, 8000);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(timer);
+    };
+  }, [activityId, applyRemoteBundle]);
+
+  useEffect(() => {
+    if (!activity) return;
+    const invitePromptKey = `letsmovie.invite-prompt.${activityId}`;
+    if (window.sessionStorage.getItem(invitePromptKey) !== "pending") return;
+
+    window.sessionStorage.removeItem(invitePromptKey);
+    setIsInvitePromptClosing(false);
+    setIsInvitePromptOpen(true);
+  }, [activity, activityId]);
 
   const areSearchResultsVisible = searchResults.length > 0;
   const selectedMovieCount = selectedMovieIds.length;
@@ -243,6 +329,17 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       { id: string; name: string; src: string }
     >();
 
+    remoteParticipants
+      .filter((remoteParticipant) => remoteParticipant.role === "member")
+      .forEach((remoteParticipant) => {
+        if (!remoteParticipant.avatarUrl) return;
+        participantMap.set(remoteParticipant.participantId, {
+          id: remoteParticipant.participantId,
+          name: remoteParticipant.nickname,
+          src: remoteParticipant.avatarUrl,
+        });
+      });
+
     activity?.memories?.forEach((memory) => {
       const id = memory.participantId ?? memory.memberId;
       const name = memory.participantName ?? memory.memberName;
@@ -251,20 +348,51 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     });
 
     if (participant?.avatarUrl) {
-      participantMap.set(participant.participantId, {
-        id: participant.participantId,
-        name: participant.nickname,
-        src: participant.avatarUrl,
-      });
+      const participantRole =
+        remoteParticipants.find(
+          (remoteParticipant) =>
+            remoteParticipant.participantId === participant.participantId,
+        )?.role ?? (isSharedActivity ? "member" : "host");
+
+      if (participantRole === "member") {
+        participantMap.set(participant.participantId, {
+          id: participant.participantId,
+          name: participant.nickname,
+          src: participant.avatarUrl,
+        });
+      }
     }
 
     return Array.from(participantMap.values());
-  }, [activity?.memories, participant]);
+  }, [activity?.memories, isSharedActivity, participant, remoteParticipants]);
   const firstMember = visibleParticipants[0];
 
   const closeStartConfirmation = () => {
     if (isStartConfirmationClosing) return;
     setIsStartConfirmationClosing(true);
+  };
+
+  const closeInvitePrompt = () => {
+    if (isInvitePromptClosing) return;
+    setIsInvitePromptClosing(true);
+  };
+
+  const copyInviteLink = async () => {
+    if (!isActivitySyncConfigured) {
+      setIsCopyToastClosing(false);
+      setCopyToastMessage("当前未配置云端，链接只能在本机使用");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setIsCopyToastClosing(false);
+      setCopyToastMessage("邀请链接已复制");
+      closeInvitePrompt();
+    } catch {
+      setIsCopyToastClosing(false);
+      setCopyToastMessage("复制失败，请手动复制链接");
+    }
   };
 
   const confirmStartPicking = () => {
@@ -280,6 +408,9 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         status: "picking",
       }),
     );
+    updateRemoteActivity(activityId, { status: "picking" }).catch(() => {
+      // LocalStorage remains the fallback for offline/dev mode.
+    });
     closeStartConfirmation();
   };
 
@@ -421,6 +552,12 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     return () => window.clearTimeout(timer);
   }, [newlyAddedMovieId]);
 
+  useEffect(() => {
+    if (!copyToastMessage) return;
+    const timer = window.setTimeout(() => setIsCopyToastClosing(true), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copyToastMessage]);
+
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmittedQuery(searchQuery.trim());
@@ -498,6 +635,28 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       const nextParticipant = { participantId, nickname, avatarUrl };
       saveParticipant(activityId, nextParticipant);
       setParticipant(nextParticipant);
+      try {
+        const remoteParticipant = await upsertRemoteParticipant({
+          activityId,
+          participant: nextParticipant,
+          role: "member",
+        });
+        setRemoteParticipants((participants) => [
+          ...participants.filter(
+            (storedParticipant) =>
+              storedParticipant.participantId !== participantId,
+          ),
+          remoteParticipant ?? { ...nextParticipant, role: "member" },
+        ]);
+      } catch {
+        setRemoteParticipants((participants) => [
+          ...participants.filter(
+            (storedParticipant) =>
+              storedParticipant.participantId !== participantId,
+          ),
+          { ...nextParticipant, role: "member" },
+        ]);
+      }
     } catch {
       setParticipantError("头像上传失败了，稍后再试一次");
     } finally {
@@ -505,7 +664,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     }
   };
 
-  const toggleRecommendedMovie = (movie: Movie) => {
+  const toggleRecommendedMovie = async (movie: Movie) => {
     const isSelected = candidateMovies.some(
       (candidateMovie) => candidateMovie.id === movie.id,
     );
@@ -518,13 +677,22 @@ export function CollectingPage({ activityId }: { activityId: string }) {
 
     if (!isSelected) saveMovie(recommendedMovie);
     setCandidateMovies(nextMovies);
-    setActivity(
-      updateActivity(activityId, {
-        candidateMovieIds: nextMovies.map((candidateMovie) => candidateMovie.id),
-      }),
-    );
+    const updatedActivity = updateActivity(activityId, {
+      candidateMovieIds: nextMovies.map((candidateMovie) => candidateMovie.id),
+    });
+    setActivity(updatedActivity);
 
     if (!isSelected) setNewlyAddedMovieId(movie.id);
+
+    try {
+      if (isSelected) {
+        await deleteRemoteMovie(activityId, movie.id);
+      } else {
+        await upsertRemoteMovies(activityId, [recommendedMovie]);
+      }
+    } catch {
+      // LocalStorage remains the fallback for offline/dev mode.
+    }
   };
 
   const startRandomReveal = () => {
@@ -625,6 +793,12 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         selectedMovieId: revealMovie.id,
       }),
     );
+    updateRemoteActivity(activityId, {
+      status: "selected",
+      selectedMovieId: revealMovie.id,
+    }).catch(() => {
+      // LocalStorage remains the fallback for offline/dev mode.
+    });
     window.sessionStorage.setItem(
       `letsmovie.activity-poster-reveal.${activityId}`,
       "pending",
@@ -747,7 +921,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   return (
     <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
       <div
-        className={`phone-canvas bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)] ${
+        className={`phone-canvas activity-detail-canvas bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)] ${
           isPageClosing ? "activity-detail-exit" : ""
         }`}
       >
@@ -969,12 +1143,24 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                 成员
               </span>
               <div className="mt-3.5 flex items-center">
-                {firstMember && (
+                {firstMember ? (
                   <img
                     src={firstMember.src}
                     alt={firstMember.name}
                     className="aspect-square size-10 shrink-0 rounded-full object-cover"
                   />
+                ) : (
+                  <button
+                    type="button"
+                    aria-label="邀请成员"
+                    onClick={() => {
+                      setIsInvitePromptClosing(false);
+                      setIsInvitePromptOpen(true);
+                    }}
+                    className="grid aspect-square size-10 shrink-0 place-items-center rounded-full bg-[#a52e4e] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.34)] transition active:scale-95"
+                  >
+                    <Plus className="size-4.5" strokeWidth={1.8} />
+                  </button>
                 )}
               </div>
             </div>
@@ -1153,112 +1339,137 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         </div>
 
         {isStartConfirmationOpen && (
-          <div className="phone-fixed z-[60] grid place-items-center px-6">
-            <button
-              type="button"
-              aria-label="关闭开始挑选确认框"
-              onClick={closeStartConfirmation}
-              className={`absolute inset-0 bg-black/58 ${
-                isStartConfirmationClosing
-                  ? "start-confirmation-overlay-closing"
-                  : "start-confirmation-overlay"
-              }`}
-            />
-            <section
-              role="alertdialog"
-              aria-modal="true"
-              aria-describedby="start-picking-description"
-              onAnimationEnd={(event) => {
-                if (
-                  !isStartConfirmationClosing ||
-                  event.target !== event.currentTarget
-                ) {
-                  return;
-                }
-
-                setIsStartConfirmationOpen(false);
-                setIsStartConfirmationClosing(false);
-                setIsStartConfirmed(false);
-              }}
-              className={`relative flex min-h-[286px] w-[320px] max-w-full -translate-y-4 flex-col rounded-[32px] bg-[#181b1f] px-6 pb-4 pt-8 shadow-[0_24px_70px_rgba(0,0,0,0.58)] ${
-                isStartConfirmationClosing
-                  ? "start-confirmation-dialog-closing"
-                  : "start-confirmation-dialog"
+          <ActionDialog
+            ariaLabel="开始挑选"
+            ariaDescribedBy={
+              isStartConfirmed ? undefined : "start-picking-description"
+            }
+            overlayAriaLabel="关闭开始挑选确认框"
+            isClosing={isStartConfirmationClosing}
+            onClose={closeStartConfirmation}
+            onClosed={() => {
+              setIsStartConfirmationOpen(false);
+              setIsStartConfirmationClosing(false);
+              setIsStartConfirmed(false);
+            }}
+            icon={
+              <svg
+                aria-hidden="true"
+                className="size-8 overflow-visible"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <g
+                  className={`clapper-top ${
+                    isStartConfirmed ? "clapper-top-closed" : ""
+                  }`}
+                >
+                  <path d="M3 6.5h18v4H3Z" />
+                  <path d="m6 6.5 3 4" />
+                  <path d="m12 6.5 3 4" />
+                </g>
+                <path d="M3 10.5h18V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+              </svg>
+            }
+            actions={
+              isStartConfirmed
+                ? [
+                    {
+                      label: "知道了",
+                      onClick: enterPickingMode,
+                      disabled: candidateMovies.length === 0,
+                      variant: "primary",
+                    },
+                  ]
+                : [
+                    {
+                      label: "再看看",
+                      onClick: closeStartConfirmation,
+                      variant: "secondary",
+                    },
+                    {
+                      label: "确认开始",
+                      onClick: confirmStartPicking,
+                      disabled: candidateMovies.length === 0,
+                      variant: "primary",
+                    },
+                  ]
+            }
+            actionKey={
+              isStartConfirmed ? "confirmed-action" : "confirm-actions"
+            }
+          >
+            <div
+              key={isStartConfirmed ? "confirmed" : "confirming"}
+              className={`start-confirmation-content text-center ${
+                isStartConfirmed ? "mt-8" : "mt-7"
               }`}
             >
-              <div className="mx-auto grid size-14 place-items-center text-[#f8f4ed]/88">
-                <svg
-                  aria-hidden="true"
-                  className="size-8 overflow-visible"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+              <p className="text-[16px] font-normal leading-6 text-[#f8f4ed]">
+                {isStartConfirmed
+                  ? "现在可以邀请朋友们开始挑选了"
+                  : "大家推荐得差不多了吗？"}
+              </p>
+              {!isStartConfirmed && (
+                <p
+                  id="start-picking-description"
+                  className="mx-auto mt-3 max-w-[280px] text-[14px] leading-6 text-[#f8f4ed]/70"
                 >
-                  <g
-                    className={`clapper-top ${
-                      isStartConfirmed ? "clapper-top-closed" : ""
-                    }`}
-                  >
-                    <path d="M3 6.5h18v4H3Z" />
-                    <path d="m6 6.5 3 4" />
-                    <path d="m12 6.5 3 4" />
-                  </g>
-                  <path d="M3 10.5h18V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
-                </svg>
-              </div>
-
-              <div
-                key={isStartConfirmed ? "confirmed" : "confirming"}
-                className={`start-confirmation-content text-center ${
-                  isStartConfirmed ? "mt-8" : "mt-7"
-                }`}
-              >
-                <p className="text-[16px] font-normal leading-6 text-[#f8f4ed]">
-                  {isStartConfirmed
-                    ? "现在可以邀请朋友们开始挑选了"
-                    : "大家推荐得差不多了吗？"}
+                  开始后，候选影单将暂时固定下来
                 </p>
-                {!isStartConfirmed && (
-                  <p
-                    id="start-picking-description"
-                    className="mx-auto mt-3 max-w-[280px] text-[14px] leading-6 text-[#f8f4ed]/70"
-                  >
-                    开始后，候选影单将暂时固定下来
-                  </p>
-                )}
-              </div>
+              )}
+            </div>
+          </ActionDialog>
+        )}
 
-              <div
-                key={isStartConfirmed ? "confirmed-action" : "confirm-actions"}
-                className={`mt-auto grid gap-2 pt-5 ${
-                  isStartConfirmed
-                    ? "start-confirmation-content grid-cols-1"
-                    : "grid-cols-2"
-                }`}
+        {isInvitePromptOpen && (
+          <ActionDialog
+            ariaLabel="邀请好友"
+            ariaDescribedBy="invite-friends-description"
+            overlayAriaLabel="关闭邀请好友弹框"
+            isClosing={isInvitePromptClosing}
+            onClose={closeInvitePrompt}
+            onClosed={() => {
+              setIsInvitePromptOpen(false);
+              setIsInvitePromptClosing(false);
+            }}
+            zIndexClassName="z-[65]"
+            icon={
+              <Popcorn
+                aria-hidden="true"
+                className="size-8"
+                strokeWidth={1.6}
+              />
+            }
+            actions={[
+              {
+                label: "稍后再说",
+                onClick: closeInvitePrompt,
+                variant: "secondary",
+              },
+              {
+                label: "复制邀请链接",
+                onClick: copyInviteLink,
+                variant: "primary",
+              },
+            ]}
+          >
+            <div className="start-confirmation-content mt-7 text-center">
+              <h2 className="text-[18px] font-medium tracking-[-0.02em] text-[#f8f4ed]">
+                邀请好友
+              </h2>
+              <p
+                id="invite-friends-description"
+                className="mx-auto mt-3 max-w-[260px] text-[14px] leading-6 text-[#f8f4ed]/70"
               >
-                {!isStartConfirmed && (
-                  <button
-                    type="button"
-                    onClick={closeStartConfirmation}
-                    className="h-12 rounded-[16px] text-[14px] font-normal text-[#f8f4ed] transition hover:bg-white/[0.05] active:scale-[0.98]"
-                  >
-                    再看看
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={isStartConfirmed ? enterPickingMode : confirmStartPicking}
-                  disabled={candidateMovies.length === 0}
-                  className="h-12 rounded-[16px] text-[14px] font-medium text-[#8b1e3f] transition hover:bg-[#8b1e3f]/10 active:scale-[0.98]"
-                >
-                  {isStartConfirmed ? "\u77e5\u9053\u4e86" : "\u786e\u8ba4\u5f00\u59cb"}
-                </button>
-              </div>
-            </section>
-          </div>
+                邀请朋友一起留下今晚的回忆吧
+              </p>
+            </div>
+          </ActionDialog>
         )}
 
         {isRevealOpen && revealMovie && (
@@ -1706,6 +1917,22 @@ export function CollectingPage({ activityId }: { activityId: string }) {
               </div>
             </article>
           </button>
+        )}
+        {copyToastMessage && (
+          <div className="phone-fixed pointer-events-none z-[130] flex items-end justify-center px-6 pb-[max(26px,env(safe-area-inset-bottom))]">
+            <div
+              onAnimationEnd={() => {
+                if (!isCopyToastClosing) return;
+                setCopyToastMessage("");
+                setIsCopyToastClosing(false);
+              }}
+              className={`rounded-full bg-[#f8f4ed] px-4 py-2 text-[13px] font-medium text-[#181a1e] shadow-[0_12px_34px_rgba(0,0,0,0.3)] ${
+                isCopyToastClosing ? "copy-toast-out" : "copy-toast-in"
+              }`}
+            >
+              {copyToastMessage}
+            </div>
+          </div>
         )}
       </div>
     </main>

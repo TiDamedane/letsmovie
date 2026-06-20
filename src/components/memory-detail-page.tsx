@@ -12,19 +12,6 @@ import {
 import { getMovieById } from "@/lib/movie-database";
 import { fetchActivityMemories } from "@/lib/supabase-memory";
 
-const hostImage = "";
-const memberOneImage = "";
-const memberTwoImage = "";
-const memberThreeImage = "";
-const memberFourImage = "";
-const legacyParticipants = [
-  { id: "xiaoyang", name: "小杨", src: hostImage },
-  { id: "member-one", name: "成员 1", src: memberOneImage },
-  { id: "member-two", name: "成员 2", src: memberTwoImage },
-  { id: "member-three", name: "成员 3", src: memberThreeImage },
-  { id: "member-four", name: "成员 4", src: memberFourImage },
-];
-
 function formatMemoryDate(date: string) {
   const [year, month, day] = date.split(".");
   return `${year}.${Number(month)}.${Number(day)}`;

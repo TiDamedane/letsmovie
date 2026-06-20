@@ -35,6 +35,7 @@ function App() {
         activityId={decodeURIComponent(
           (activityMatch ?? sharedActivityMatch)?.[1] ?? "",
         )}
+        isSharedActivity={Boolean(sharedActivityMatch)}
       />
     );
   }

@@ -58,6 +58,22 @@ function writeActivities(activities: Activity[]) {
   window.localStorage.setItem(storageKey, JSON.stringify(activities));
 }
 
+export function saveActivity(activity: Activity) {
+  const activities = readActivities();
+  const existingIndex = activities.findIndex(
+    (storedActivity) => storedActivity.id === activity.id,
+  );
+
+  if (existingIndex >= 0) {
+    activities[existingIndex] = activity;
+    writeActivities(activities);
+    return activity;
+  }
+
+  writeActivities([activity, ...activities]);
+  return activity;
+}
+
 export function getActivities() {
   return readActivities().sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
@@ -106,8 +122,7 @@ export function createActivity(input: CreateActivityInput) {
     createdAt: new Date().toISOString(),
   };
 
-  writeActivities([activity, ...readActivities()]);
-  return activity;
+  return saveActivity(activity);
 }
 
 export function updateActivity(

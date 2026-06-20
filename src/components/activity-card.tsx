@@ -3,10 +3,6 @@ import { Card } from "@/components/ui/card";
 import type { Activity } from "@/lib/activity-store";
 import { getMovieById } from "@/lib/movie-database";
 import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
-import memberOneImage from "../../picture/user/IMG_20260611_210255.jpg";
-import memberTwoImage from "../../picture/user/IMG_20260611_210306.jpg";
-import memberThreeImage from "../../picture/user/IMG_20260611_210318.jpg";
-import memberFourImage from "../../picture/user/IMG_20260611_210333.jpg";
 
 const members: string[] = [];
 

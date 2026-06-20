@@ -1,0 +1,4 @@
+interface:
+  display_name: "FrameClub Components"
+  short_description: "Reusable FrameClub UI component contracts."
+  default_prompt: "Use this when creating or modifying shared LETSMOVIE UI cards, dialogs, buttons, overlays, avatars, and repeated component patterns."
