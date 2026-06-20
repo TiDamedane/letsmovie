@@ -292,7 +292,8 @@ export function CreateActivityPage() {
       );
     }
 
-    window.location.hash = "#/";
+    window.location.hash =
+      selectionMode === "random" ? `#/activities/${activity.id}` : "#/";
   };
 
   return (

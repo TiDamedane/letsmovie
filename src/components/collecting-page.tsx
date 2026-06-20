@@ -260,12 +260,32 @@ export function CollectingPage({ activityId }: { activityId: string }) {
 
     return Array.from(participantMap.values());
   }, [activity?.memories, participant]);
-  const members = visibleParticipants.slice(0, 4).map((member) => member.src);
-  const extraMembersCount = Math.max(0, visibleParticipants.length - 4);
+  const firstMember = visibleParticipants[0];
 
   const closeStartConfirmation = () => {
     if (isStartConfirmationClosing) return;
     setIsStartConfirmationClosing(true);
+  };
+
+  const confirmStartPicking = () => {
+    if (candidateMovies.length === 0) return;
+    setIsStartConfirmed(true);
+  };
+
+  const enterPickingMode = () => {
+    setIsPicking(true);
+    setSelectedMovieIds([]);
+    setActivity(
+      updateActivity(activityId, {
+        status: "picking",
+      }),
+    );
+    closeStartConfirmation();
+  };
+
+  const confirmPickedMovies = () => {
+    if (!isSelectionComplete) return;
+    startRandomReveal();
   };
 
   const toggleMovieSelection = (movieId: string) => {
@@ -508,14 +528,17 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   };
 
   const startRandomReveal = () => {
-    if (candidateMovies.length === 0) return;
+    const revealPool = selectedMovieIds.length
+      ? candidateMovies.filter((movie) => selectedMovieIds.includes(movie.id))
+      : candidateMovies;
+    if (revealPool.length === 0) return;
 
     const pickDifferentMovie = (currentMovie: Movie | null) => {
-      if (candidateMovies.length <= 1 || !currentMovie) {
-        return candidateMovies[0];
+      if (revealPool.length <= 1 || !currentMovie) {
+        return revealPool[0];
       }
 
-      const availableMovies = candidateMovies.filter(
+      const availableMovies = revealPool.filter(
         (movie) => movie.id !== currentMovie.id,
       );
       return availableMovies[
@@ -539,12 +562,11 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       scheduleRevealText();
     };
 
-    const winner =
-      candidateMovies[Math.floor(Math.random() * candidateMovies.length)];
+    const winner = revealPool[Math.floor(Math.random() * revealPool.length)];
     setIsStartConfirmationOpen(false);
     setIsStartConfirmationClosing(false);
     setIsStartConfirmed(false);
-    const firstMovie = candidateMovies[0];
+    const firstMovie = revealPool[0];
     setPreviousRevealMovie(null);
     setRevealMovie(firstMovie);
     rollingMovieRef.current = firstMovie;
@@ -558,7 +580,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       const elapsed = Date.now() - startedAt;
       if (elapsed >= 3000) {
         if (
-          candidateMovies.length > 1 &&
+          revealPool.length > 1 &&
           rollingMovieRef.current?.id === winner.id
         ) {
           const bridgeMovie = pickDifferentMovie(rollingMovieRef.current);
@@ -883,7 +905,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
               ? { backgroundImage: `url("${revealedMovie.src}")` }
               : undefined
           }
-          className={`relative h-[350px] overflow-hidden px-7 pb-12 pt-[92px] ${
+          className={`relative h-[350px] overflow-hidden px-7 pb-12 pt-[88px] ${
             revealedMovie ? "collection-hero-selected" : "collection-hero"
           }`}
         >
@@ -891,16 +913,6 @@ export function CollectingPage({ activityId }: { activityId: string }) {
             <h1 className="mt-5 text-[32px] font-medium leading-10 tracking-[-0.045em] [text-shadow:0_3px_18px_rgb(0_0_0/0.3)]">
               {activity.title}
             </h1>
-            <div className="mt-5 space-y-2.5 text-[14px] leading-5 text-[#f8f4ed]/75">
-              <p className="flex items-center gap-2">
-                <MapPin className="size-4" strokeWidth={1.6} />
-                {activity.location}
-              </p>
-              <p className="flex items-center gap-2">
-                <CalendarDays className="size-4" strokeWidth={1.6} />
-                {formatActivityDate(activity)}
-              </p>
-            </div>
             <div className="mt-5">
               <div className="flex items-center gap-2 text-[12px] font-semibold tracking-[0.08em] text-[#f8f4ed]/90">
                 <span
@@ -916,12 +928,15 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                     ? "影片挑选中"
                     : "影片收集中"}
               </div>
-              <p className="ml-4 mt-1.5 text-[12px] text-[#f8f4ed]/55">
-                {isMovieSelected
-                  ? revealedMovie.title
-                  : isPicking
-                  ? "请选择 3 部影片"
-                  : activity.note || "和朋友一起挑选片单"}
+            </div>
+            <div className="mt-4 space-y-2.5 text-[14px] leading-5 text-[#f8f4ed]/75">
+              <p className="flex items-center gap-2">
+                <MapPin className="size-4" strokeWidth={1.6} />
+                {activity.location}
+              </p>
+              <p className="flex items-center gap-2">
+                <CalendarDays className="size-4" strokeWidth={1.6} />
+                {formatActivityDate(activity)}
               </p>
             </div>
           </div>
@@ -949,30 +964,18 @@ export function CollectingPage({ activityId }: { activityId: string }) {
               </div>
             </div>
 
-            <div className="flex flex-col items-end">
-              <span className="text-[14px] font-normal text-[#f8f4ed]/75">
+            <div className="flex w-10 flex-col items-center">
+              <span className="text-center text-[14px] font-normal text-[#f8f4ed]/75">
                 成员
               </span>
-              <div className="mt-3.5 flex -space-x-2">
-                {members.map((member, index) => (
-                  <span
-                    key={member}
-                    className="block size-9 shrink-0 overflow-hidden rounded-full bg-[#2b2f36] ring-2 ring-[#181a1e]"
-                  >
-                    <img
-                    src={member}
-                    alt={`参与成员 ${index + 1}`}
-                      className="block size-full rounded-full object-cover"
+              <div className="mt-3.5 flex items-center">
+                {firstMember && (
+                  <img
+                    src={firstMember.src}
+                    alt={firstMember.name}
+                    className="aspect-square size-10 shrink-0 rounded-full object-cover"
                   />
-                  </span>
-                ))}
-                <span
-                  className={`size-9 place-items-center rounded-full bg-[#2b2f36] text-[11px] text-[#f8f4ed]/80 ring-2 ring-[#181a1e] ${
-                    extraMembersCount > 0 ? "grid" : "hidden"
-                  }`}
-                >
-                  +{extraMembersCount}
-                </span>
+                )}
               </div>
             </div>
           </div>
@@ -1098,6 +1101,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
           ) : isPicking ? (
             <button
               type="button"
+              onClick={confirmPickedMovies}
               disabled={!isSelectionComplete}
               className={`flex min-h-[72px] w-full items-center justify-between rounded-[16px] px-5 text-left transition duration-200 ${
                 isSelectionComplete
@@ -1246,13 +1250,11 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                 )}
                 <button
                   type="button"
-                  onClick={() => {
-                    startRandomReveal();
-                  }}
+                  onClick={isStartConfirmed ? enterPickingMode : confirmStartPicking}
                   disabled={candidateMovies.length === 0}
                   className="h-12 rounded-[16px] text-[14px] font-medium text-[#8b1e3f] transition hover:bg-[#8b1e3f]/10 active:scale-[0.98]"
                 >
-                  确认开始
+                  {isStartConfirmed ? "\u77e5\u9053\u4e86" : "\u786e\u8ba4\u5f00\u59cb"}
                 </button>
               </div>
             </section>

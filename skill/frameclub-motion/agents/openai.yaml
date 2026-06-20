@@ -1,4 +1,4 @@
 interface:
   display_name: "FrameClub Motion"
-  short_description: "Unify FrameClub animation presets and motion decisions."
-  default_prompt: "Use FrameClub Motion to choose and apply the correct animation preset before editing motion code."
+  short_description: "Unify FrameClub motion and prototype UI standards."
+  default_prompt: "Use FrameClub Motion to choose and apply the correct animation preset or prototype UI constraint before editing FrameClub code."

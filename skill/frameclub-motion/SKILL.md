@@ -1,6 +1,6 @@
 ---
 name: frameclub-motion
-description: FrameClub/LETSMOVIE motion system for React, Tailwind, and CSS keyframe work. Use when Codex needs to choose, review, create, refactor, or modify animations for FrameClub components, including movie cards, search results, tickets, bottom sheets, overlays, poster reveal effects, archived activity exits, transition timing, easing, opacity, scale, translate, or keyframes. Also use when it is unclear which existing animation preset should apply.
+description: FrameClub/LETSMOVIE motion and prototype UI standards for React, Tailwind, and CSS work. Use when Codex needs to choose, review, create, refactor, or modify animations for FrameClub components, including movie cards, search results, tickets, bottom sheets, overlays, poster reveal effects, archived activity exits, transition timing, easing, opacity, scale, translate, or keyframes. Also use for project-specific prototype constraints such as the fixed phone canvas and avatar sizing/shape, or when it is unclear which existing animation preset should apply.
 ---
 
 # FrameClub Motion
@@ -42,6 +42,16 @@ Implementation expectation:
   `absolute inset-0` layer inside `phone-canvas`.
 - Do not create a page-specific canvas height unless the user explicitly changes
   the prototype size.
+
+## Avatar Standard
+
+All in-page avatars in the prototype must be circular and fixed at `40px x 40px`.
+
+Implementation expectation:
+
+- Use `width: 40px`, `height: 40px`, and `border-radius: 50%`.
+- Apply the same size to image-backed avatars, placeholder avatars, and avatar buttons.
+- Keep the rendered image cropped with `object-fit: cover`.
 
 ## Motion Philosophy
 
@@ -234,6 +244,8 @@ Do not use this for page return, modal close, or ticket exit.
 - Do not create a new timing curve when an existing preset applies.
 - Do not let LETSMOVIE page canvases drift from 393 x 852.
 - Do not use viewport height as the app canvas height.
+- Do not render in-page avatars at any size other than 40px x 40px unless the user explicitly changes the prototype standard.
+- Do not render in-page avatars as rounded rectangles; they must be circular.
 - Do not alter layout while only changing motion.
 - Do not decide an ambiguous animation mapping yourself; search this skill, inspect existing code, then ask the user if still unclear.
 
