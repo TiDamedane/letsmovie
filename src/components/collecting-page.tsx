@@ -1,7 +1,9 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type CSSProperties,
   type FormEvent,
 } from "react";
@@ -28,6 +30,7 @@ import {
   getNextMemoryTicketNumber,
   updateActivity,
   type Activity,
+  type ActivityMemory,
 } from "@/lib/activity-store";
 import {
   getMovieById,
@@ -35,8 +38,20 @@ import {
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
+import {
+  createParticipantId,
+  getParticipant,
+  saveParticipant,
+  type Participant,
+} from "@/lib/participant-store";
+import {
+  createMemory,
+  fetchActivityMemories,
+  uploadParticipantAvatar,
+} from "@/lib/supabase-memory";
 
-const members = [
+const defaultAvatarPool = [
+  hostImage,
   memberOneImage,
   memberTwoImage,
   memberThreeImage,
@@ -64,10 +79,85 @@ function formatMemoryTicketDate(activity: Activity) {
   return `${year}.${Number(month)}.${Number(day)}`;
 }
 
+async function cropAvatarFile(
+  file: File,
+  crop: { x: number; y: number; zoom: number },
+) {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = imageUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    const size = 512;
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+
+    const baseCropSize = Math.min(image.naturalWidth, image.naturalHeight);
+    const cropSize = baseCropSize / crop.zoom;
+    const maxOffsetX = (image.naturalWidth - cropSize) / 2;
+    const maxOffsetY = (image.naturalHeight - cropSize) / 2;
+    const sourceX =
+      image.naturalWidth / 2 - cropSize / 2 + (crop.x / 100) * maxOffsetX;
+    const sourceY =
+      image.naturalHeight / 2 - cropSize / 2 + (crop.y / 100) * maxOffsetY;
+
+    context.drawImage(
+      image,
+      Math.max(0, sourceX),
+      Math.max(0, sourceY),
+      cropSize,
+      cropSize,
+      0,
+      0,
+      size,
+      size,
+    );
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.9),
+    );
+    if (!blob) return file;
+    return new File([blob], "avatar.jpg", { type: "image/jpeg" });
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export function CollectingPage({ activityId }: { activityId: string }) {
   const [activity, setActivity] = useState<Activity | undefined>(() =>
     getActivity(activityId),
   );
+  const [participant, setParticipant] = useState<Participant | null>(() =>
+    getParticipant(activityId),
+  );
+  const [participantName, setParticipantName] = useState("");
+  const [participantAvatarFile, setParticipantAvatarFile] =
+    useState<File | null>(null);
+  const [participantAvatarPreview, setParticipantAvatarPreview] = useState("");
+  const [participantAvatarCrop, setParticipantAvatarCrop] = useState({
+    x: 0,
+    y: 0,
+    zoom: 1,
+  });
+  const [participantError, setParticipantError] = useState("");
+  const [isSavingParticipant, setIsSavingParticipant] = useState(false);
   const [candidateMovies, setCandidateMovies] = useState<Movie[]>(() =>
     (getActivity(activityId)?.candidateMovieIds ?? [])
       .map(getMovieById)
@@ -106,6 +196,8 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   >("rolling");
   const [selectedMovieIds, setSelectedMovieIds] = useState<string[]>([]);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
+  const [isMemoryClosing, setIsMemoryClosing] = useState(false);
+  const [shouldOpenMemoryTicket, setShouldOpenMemoryTicket] = useState(false);
   const [selectedMemoryMood, setSelectedMemoryMood] = useState("");
   const [memoryNote, setMemoryNote] = useState("");
   const [isMemoryTicketOpen, setIsMemoryTicketOpen] = useState(false);
@@ -126,10 +218,50 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   const recommendationPanelRef = useRef<HTMLDivElement>(null);
   const rollingMovieRef = useRef<Movie | null>(null);
 
+  useEffect(() => {
+    if (!activity || participant) return;
+    const isLocalCreatorActivity = activity.id.startsWith("activity-");
+    if (!isLocalCreatorActivity) return;
+
+    const creatorParticipant = {
+      participantId: createParticipantId(),
+      nickname: "小杨",
+      avatarUrl: hostImage,
+    };
+    saveParticipant(activityId, creatorParticipant);
+    setParticipant(creatorParticipant);
+  }, [activity, activityId, participant]);
+
   const areSearchResultsVisible = searchResults.length > 0;
   const selectedMovieCount = selectedMovieIds.length;
   const isSelectionComplete = selectedMovieCount === 3;
   const isMovieSelected = activity?.status === "selected" && revealedMovie;
+  const currentParticipantName = participant?.nickname ?? currentUserName;
+  const visibleParticipants = useMemo(() => {
+    const participantMap = new Map<
+      string,
+      { id: string; name: string; src: string }
+    >();
+
+    activity?.memories?.forEach((memory) => {
+      const id = memory.participantId ?? memory.memberId;
+      const name = memory.participantName ?? memory.memberName;
+      const src = memory.participantAvatar;
+      if (id && name && src) participantMap.set(id, { id, name, src });
+    });
+
+    if (participant?.avatarUrl) {
+      participantMap.set(participant.participantId, {
+        id: participant.participantId,
+        name: participant.nickname,
+        src: participant.avatarUrl,
+      });
+    }
+
+    return Array.from(participantMap.values());
+  }, [activity?.memories, participant]);
+  const members = visibleParticipants.slice(0, 4).map((member) => member.src);
+  const extraMembersCount = Math.max(0, visibleParticipants.length - 4);
 
   const closeStartConfirmation = () => {
     if (isStartConfirmationClosing) return;
@@ -182,6 +314,27 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       isActive = false;
     };
   }, [searchQuery, submittedQuery]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    fetchActivityMemories(activityId)
+      .then((memories) => {
+        if (!isActive || memories.length === 0) return;
+        setActivity((currentActivity) =>
+          currentActivity
+            ? updateActivity(activityId, { memories }) ?? currentActivity
+            : currentActivity,
+        );
+      })
+      .catch(() => {
+        // LocalStorage remains the fallback for offline/dev mode.
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [activityId]);
 
   useEffect(() => {
     if (areSearchResultsVisible) {
@@ -237,7 +390,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     const timer = window.setTimeout(() => {
       setIsRecommendationOpen(false);
       setIsRecommendationClosing(false);
-    }, 200);
+    }, 300);
 
     return () => window.clearTimeout(timer);
   }, [isRecommendationClosing]);
@@ -253,11 +406,90 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     setSubmittedQuery(searchQuery.trim());
   };
 
+  const handleParticipantAvatarChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    setParticipantError("");
+
+    if (!file) {
+      setParticipantAvatarFile(null);
+      setParticipantAvatarPreview("");
+      return;
+    }
+
+    const isSupported = ["image/jpeg", "image/png", "image/webp"].includes(
+      file.type,
+    );
+    if (!isSupported) {
+      setParticipantError("头像只支持 jpg、png、webp");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setParticipantError("头像不能超过 2MB");
+      event.target.value = "";
+      return;
+    }
+
+    setParticipantAvatarFile(file);
+    setParticipantAvatarPreview(URL.createObjectURL(file));
+    setParticipantAvatarCrop({ x: 0, y: 0, zoom: 1 });
+  };
+
+  const enterActivity = async () => {
+    const nickname = participantName.trim();
+    if (!nickname) {
+      setParticipantError("先告诉大家怎么称呼你");
+      return;
+    }
+
+    const participantId = createParticipantId();
+    setIsSavingParticipant(true);
+    setParticipantError("");
+
+    try {
+      let avatarUrl = "";
+
+      if (participantAvatarFile) {
+        const croppedAvatarFile = await cropAvatarFile(
+          participantAvatarFile,
+          participantAvatarCrop,
+        );
+        avatarUrl = await uploadParticipantAvatar({
+          activityId,
+          participantId,
+          file: croppedAvatarFile,
+        });
+
+        if (!avatarUrl) {
+          avatarUrl = await fileToDataUrl(croppedAvatarFile);
+        }
+      }
+
+      if (!avatarUrl) {
+        avatarUrl =
+          defaultAvatarPool[
+            Math.floor(Math.random() * defaultAvatarPool.length)
+          ];
+      }
+
+      const nextParticipant = { participantId, nickname, avatarUrl };
+      saveParticipant(activityId, nextParticipant);
+      setParticipant(nextParticipant);
+    } catch {
+      setParticipantError("头像上传失败了，稍后再试一次");
+    } finally {
+      setIsSavingParticipant(false);
+    }
+  };
+
   const toggleRecommendedMovie = (movie: Movie) => {
     const isSelected = candidateMovies.some(
       (candidateMovie) => candidateMovie.id === movie.id,
     );
-    const recommendedMovie = { ...movie, recommender: currentUserName };
+    const recommendedMovie = { ...movie, recommender: currentParticipantName };
     const nextMovies = isSelected
       ? candidateMovies.filter(
           (candidateMovie) => candidateMovie.id !== movie.id,
@@ -378,8 +610,8 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     setIsRevealOpen(false);
   };
 
-  const confirmMemory = () => {
-    if (!selectedMemoryMood || !activity) return;
+  const confirmMemory = async () => {
+    if (!selectedMemoryMood || !activity || !participant) return;
 
     const memoryTicketNumber =
       activity.memoryTicketNumber ??
@@ -393,6 +625,17 @@ export function CollectingPage({ activityId }: { activityId: string }) {
       note: memoryNote.trim(),
       createdAt: memoryCreatedAt,
     };
+    const normalizedUserMemory: ActivityMemory = {
+      ...currentUserMemory,
+      activityId,
+      participantId: participant.participantId,
+      participantName: participant.nickname,
+      participantAvatar: participant.avatarUrl,
+      content: memoryNote.trim(),
+    };
+    const savedMemory =
+      (await createMemory(normalizedUserMemory).catch(() => null)) ??
+      normalizedUserMemory;
     setActivity(
       updateActivity(activityId, {
         memoryEmoji: selectedMemoryMood,
@@ -401,20 +644,22 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         memoryTicketNumber,
         memories: [
           ...(activity.memories ?? []).filter(
-            (memory) => memory.memberId !== currentUserMemory.memberId,
+            (memory) =>
+              (memory.participantId ?? memory.memberId) !==
+              normalizedUserMemory.participantId,
           ),
-          currentUserMemory,
+          savedMemory,
         ],
       }),
     );
-    setIsMemoryOpen(false);
-    setIsMemoryTicketOpen(true);
+    setShouldOpenMemoryTicket(true);
+    setIsMemoryClosing(true);
   };
 
   const closeMemory = () => {
-    setIsMemoryOpen(false);
-    setSelectedMemoryMood("");
-    setMemoryNote("");
+    if (isMemoryClosing) return;
+    setShouldOpenMemoryTicket(false);
+    setIsMemoryClosing(true);
   };
 
   const archiveMemory = () => {
@@ -432,6 +677,17 @@ export function CollectingPage({ activityId }: { activityId: string }) {
     window.location.hash = "#/";
   };
 
+  const leaveActivity = (remove = false) => {
+    if (isPageClosing) return;
+    setIsActivityActionsOpen(false);
+    setIsPageClosing(true);
+
+    window.setTimeout(() => {
+      if (remove) deleteActivity(activityId);
+      window.location.hash = "#/";
+    }, 420);
+  };
+
   const closeActivityActions = (deleteAfterClosing = false) => {
     if (isActivityActionsClosing) return;
     setShouldDeleteActivity(deleteAfterClosing);
@@ -439,11 +695,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   };
 
   const returnToActivities = () => {
-    if (isPageClosing) return;
-    setIsPageClosing(true);
-    window.setTimeout(() => {
-      window.location.hash = "#/";
-    }, 420);
+    leaveActivity();
   };
 
   /*
@@ -456,8 +708,8 @@ export function CollectingPage({ activityId }: { activityId: string }) {
 
   if (!activity) {
     return (
-      <main className="flex min-h-dvh justify-center bg-[#090a0c] text-[#f8f4ed]">
-        <div className="flex min-h-dvh w-full max-w-[393px] flex-col items-center justify-center bg-[#131416] px-8 text-center">
+      <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
+        <div className="phone-canvas flex flex-col items-center justify-center bg-[#131416] px-8 text-center">
           <p className="text-[17px] text-[#f8f4ed]/75">这个活动不存在</p>
           <a
             href="#/"
@@ -471,12 +723,134 @@ export function CollectingPage({ activityId }: { activityId: string }) {
   }
 
   return (
-    <main className="flex min-h-dvh justify-center bg-[#090a0c] text-[#f8f4ed]">
+    <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
       <div
-        className={`relative min-h-dvh w-full max-w-[393px] overflow-x-hidden bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)] ${
+        className={`phone-canvas bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)] ${
           isPageClosing ? "activity-detail-exit" : ""
         }`}
       >
+        {!participant && (
+          <div className="phone-fixed z-[120] grid place-items-center bg-black/68 px-6 backdrop-blur-[4px]">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-label="怎么称呼你？"
+              className="start-confirmation-dialog w-full rounded-[24px] bg-[#23262d] px-5 py-6 shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+            >
+              <h2 className="text-center text-[22px] font-medium tracking-[-0.03em] text-[#f8f4ed]">
+                怎么称呼你？
+              </h2>
+
+              <div className="mt-7 flex flex-col items-center">
+                <label className="grid aspect-square size-20 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-full border border-[#f8f4ed]/12 bg-[#1c1f24] text-[12px] text-[#f8f4ed]/55 transition active:scale-95">
+                  {participantAvatarPreview ? (
+                    <img
+                      src={participantAvatarPreview}
+                      alt=""
+                      className="aspect-square size-full rounded-full object-cover"
+                      style={{
+                        objectPosition: `${50 + participantAvatarCrop.x / 2}% ${
+                          50 + participantAvatarCrop.y / 2
+                        }%`,
+                        transform: `scale(${participantAvatarCrop.zoom})`,
+                      }}
+                    />
+                  ) : (
+                    <span>上传头像</span>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleParticipantAvatarChange}
+                    className="sr-only"
+                  />
+                </label>
+                <p className="mt-2 text-[12px] text-[#f8f4ed]/35">
+                  可选，jpg / png / webp，2MB 内
+                </p>
+                {participantAvatarPreview && (
+                  <div className="mt-4 w-full space-y-3 rounded-[16px] bg-[#1c1f24]/72 px-4 py-3">
+                    <label className="block text-[11px] text-[#f8f4ed]/45">
+                      缩放
+                      <input
+                        type="range"
+                        min="1"
+                        max="2"
+                        step="0.01"
+                        value={participantAvatarCrop.zoom}
+                        onChange={(event) =>
+                          setParticipantAvatarCrop((crop) => ({
+                            ...crop,
+                            zoom: Number(event.target.value),
+                          }))
+                        }
+                        className="mt-2 w-full accent-[#a52e4e]"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-[#f8f4ed]/45">
+                      左右
+                      <input
+                        type="range"
+                        min="-100"
+                        max="100"
+                        value={participantAvatarCrop.x}
+                        onChange={(event) =>
+                          setParticipantAvatarCrop((crop) => ({
+                            ...crop,
+                            x: Number(event.target.value),
+                          }))
+                        }
+                        className="mt-2 w-full accent-[#a52e4e]"
+                      />
+                    </label>
+                    <label className="block text-[11px] text-[#f8f4ed]/45">
+                      上下
+                      <input
+                        type="range"
+                        min="-100"
+                        max="100"
+                        value={participantAvatarCrop.y}
+                        onChange={(event) =>
+                          setParticipantAvatarCrop((crop) => ({
+                            ...crop,
+                            y: Number(event.target.value),
+                          }))
+                        }
+                        className="mt-2 w-full accent-[#a52e4e]"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <input
+                value={participantName}
+                onChange={(event) => {
+                  setParticipantName(event.target.value);
+                  setParticipantError("");
+                }}
+                placeholder="输入昵称"
+                className="mt-7 h-12 w-full rounded-[16px] border border-[#f8f4ed]/12 bg-[#1c1f24] px-4 text-[15px] text-[#f8f4ed] outline-none placeholder:text-[#f8f4ed]/35 focus:border-[#a52e4e]"
+              />
+
+              {participantError && (
+                <p className="mt-3 text-center text-[12px] text-[#a52e4e]">
+                  {participantError}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={enterActivity}
+                disabled={isSavingParticipant}
+                className="mt-6 flex h-12 w-full items-center justify-center rounded-[16px] bg-[#a52e4e] text-[15px] font-medium text-[#f8f4ed] transition active:scale-[0.985] disabled:opacity-60"
+              >
+                {isSavingParticipant ? "进入中" : "进入观影局"}
+              </button>
+            </section>
+          </div>
+        )}
+
         <header className="absolute inset-x-0 top-0 z-30 flex h-16 items-center justify-between px-5 text-[#f8f4ed]">
           <button
             type="button"
@@ -561,8 +935,8 @@ export function CollectingPage({ activityId }: { activityId: string }) {
           }
           className="relative z-20 -mt-7 min-h-[620px] rounded-t-[32px] border-t border-white/[0.08] bg-[#181a1e] px-5 pb-40 pt-7 shadow-[0_-24px_55px_rgba(0,0,0,0.34)] transition-[padding-bottom] duration-200"
         >
-          <div className="flex items-start justify-between px-1">
-            <div>
+          <div className="flex w-full items-start justify-between px-1">
+            <div className="flex flex-col items-start">
               <span className="text-[14px] font-normal text-[#f8f4ed]/75">
                 主持人
               </span>
@@ -570,26 +944,34 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                 <img
                   src={hostImage}
                   alt="活动主持人"
-                  className="size-10 rounded-full object-cover"
+                  className="aspect-square size-10 shrink-0 rounded-full object-cover"
                 />
               </div>
             </div>
 
-            <div className="text-right">
+            <div className="flex flex-col items-end">
               <span className="text-[14px] font-normal text-[#f8f4ed]/75">
                 成员
               </span>
               <div className="mt-3.5 flex -space-x-2">
                 {members.map((member, index) => (
-                  <img
+                  <span
                     key={member}
+                    className="block size-9 shrink-0 overflow-hidden rounded-full bg-[#2b2f36] ring-2 ring-[#181a1e]"
+                  >
+                    <img
                     src={member}
                     alt={`参与成员 ${index + 1}`}
-                    className="size-9 rounded-full object-cover ring-2 ring-[#181a1e]"
+                      className="block size-full rounded-full object-cover"
                   />
+                  </span>
                 ))}
-                <span className="grid size-9 place-items-center rounded-full bg-[#2b2f36] text-[11px] text-[#f8f4ed]/80 ring-2 ring-[#181a1e]">
-                  +3
+                <span
+                  className={`size-9 place-items-center rounded-full bg-[#2b2f36] text-[11px] text-[#f8f4ed]/80 ring-2 ring-[#181a1e] ${
+                    extraMembersCount > 0 ? "grid" : "hidden"
+                  }`}
+                >
+                  +{extraMembersCount}
                 </span>
               </div>
             </div>
@@ -698,13 +1080,15 @@ export function CollectingPage({ activityId }: { activityId: string }) {
           )}
         </section>
 
-        <div className="fixed bottom-0 left-1/2 z-40 w-full max-w-[393px] -translate-x-1/2 bg-gradient-to-t from-[#131416] via-[#131416]/96 to-transparent px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-9">
+        <div className="absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-[#131416] via-[#131416]/96 to-transparent px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-9">
           {isMovieSelected ? (
             <button
               type="button"
               onClick={() => {
                 setSelectedMemoryMood("");
                 setMemoryNote("");
+                setIsMemoryClosing(false);
+                setShouldOpenMemoryTicket(false);
                 setIsMemoryOpen(true);
               }}
               className="flex h-14 w-full items-center justify-center rounded-[16px] bg-[#a52e4e] text-[16px] font-medium text-[#f8f4ed] shadow-[0_10px_30px_rgba(165,46,78,0.28)] transition active:scale-[0.985]"
@@ -765,7 +1149,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         </div>
 
         {isStartConfirmationOpen && (
-          <div className="fixed inset-y-0 left-1/2 z-[60] grid w-full max-w-[393px] -translate-x-1/2 place-items-center px-6">
+          <div className="phone-fixed z-[60] grid place-items-center px-6">
             <button
               type="button"
               aria-label="关闭开始挑选确认框"
@@ -876,7 +1260,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         )}
 
         {isRevealOpen && revealMovie && (
-          <div className="fixed inset-y-0 left-1/2 z-[80] grid w-full max-w-[393px] -translate-x-1/2 place-items-center overflow-hidden bg-black/90 px-6 backdrop-blur-[4px]">
+          <div className="phone-fixed z-[80] grid place-items-center bg-black/90 px-6 backdrop-blur-[4px]">
             <div className="pointer-events-none absolute inset-x-[-80px] top-[18%] h-[430px] rounded-full bg-[#8a1f3f]/18 blur-[90px]" />
             <section
               role="dialog"
@@ -974,10 +1358,14 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         )}
 
         {isRecommendationOpen && (
-          <div className="pointer-events-none fixed inset-y-0 left-1/2 z-50 w-full max-w-[393px] -translate-x-1/2 overflow-hidden">
+          <div className="phone-fixed pointer-events-none z-50">
             <div
               aria-hidden="true"
-              className="absolute inset-0 bg-black/20"
+              className={`absolute inset-0 bg-black/20 ${
+                isRecommendationClosing
+                  ? "bottom-sheet-overlay-out"
+                  : "bottom-sheet-overlay-in"
+              }`}
             />
             <div
               ref={recommendationPanelRef}
@@ -1047,41 +1435,48 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                       return (
                         <article
                           key={movie.id}
-                          className={`search-result-enter relative min-w-0 rounded-[16px] transition-colors duration-200 ${
+                          className={`search-result-enter movie-search-card relative min-w-0 overflow-hidden rounded-[16px] border ${
                             isSelected
-                              ? "bg-[#8b1e3f]/24"
-                              : "bg-transparent"
+                              ? "movie-search-card-selected"
+                              : "border-transparent bg-transparent"
                           }`}
                         >
-                          <img
-                            src={movie.src}
-                            alt={movie.title}
-                            className="aspect-[2/3] w-full rounded-[16px] object-cover"
-                          />
-                          <div className="pb-1 pt-2">
-                            <h3 className="text-[12px] leading-[17px] text-[#f8f4ed]">
-                              {movie.title}
-                            </h3>
-                            <p className="mt-0.5 pr-8 text-[10px] leading-4 text-[#f8f4ed]/58">
-                              {movie.director || "导演信息待补全"}
-                            </p>
-                          </div>
                           <button
                             type="button"
                             onClick={() => toggleRecommendedMovie(movie)}
                             aria-label={
                               isSelected
-                                ? `从候选影片移除${movie.title}`
-                                : `将${movie.title}加入候选影片`
+                                ? `移除${movie.title}`
+                                : `加入${movie.title}`
                             }
-                            className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)] transition duration-200 active:scale-95"
+                            className="block w-full rounded-[16px] text-left transition active:scale-[0.98]"
                           >
-                            {isSelected ? (
-                              <Check className="size-4" strokeWidth={2.2} />
-                            ) : (
-                              <Plus className="size-4" strokeWidth={2.2} />
-                            )}
+                            <span className="relative block overflow-hidden rounded-[16px]">
+                              <img
+                                src={movie.src}
+                                alt={movie.title}
+                                className="aspect-[2/3] w-full object-cover"
+                              />
+                              <span
+                                aria-hidden="true"
+                                className="movie-search-poster-overlay absolute inset-0 bg-[#8b1e3f]"
+                              />
+                            </span>
+                            <span className="block pb-1 pt-2">
+                              <span className="block text-[12px] leading-[17px] text-[#f8f4ed]">
+                                {movie.title}
+                              </span>
+                              <span className="mt-0.5 block pr-8 text-[10px] leading-4 text-[#f8f4ed]/58">
+                                {movie.director || "导演信息待补全"}
+                              </span>
+                            </span>
                           </button>
+                          <span
+                            aria-hidden="true"
+                            className="movie-search-selected-indicator absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)]"
+                          >
+                            <Check className="size-4" strokeWidth={2.2} />
+                          </span>
                         </article>
                       );
                     })}
@@ -1109,7 +1504,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         )}
 
         {isActivityActionsOpen && (
-          <div className="fixed inset-y-0 left-1/2 z-[70] w-full max-w-[393px] -translate-x-1/2 overflow-hidden">
+          <div className="phone-fixed z-[70]">
             <button
               type="button"
               aria-label="关闭活动操作"
@@ -1133,8 +1528,7 @@ export function CollectingPage({ activityId }: { activityId: string }) {
                 }
 
                 if (shouldDeleteActivity) {
-                  deleteActivity(activityId);
-                  window.location.hash = "#/";
+                  leaveActivity(true);
                   return;
                 }
 
@@ -1160,18 +1554,39 @@ export function CollectingPage({ activityId }: { activityId: string }) {
         )}
 
         {isMemoryOpen && (
-          <div className="fixed inset-y-0 left-1/2 z-[90] w-full max-w-[393px] -translate-x-1/2 overflow-hidden">
+          <div className="phone-fixed z-[90]">
             <button
               type="button"
               aria-label="关闭留下回忆"
               onClick={closeMemory}
-              className="memory-overlay absolute inset-0 bg-black/62 backdrop-blur-[2px]"
+              className={`absolute inset-0 bg-black/62 backdrop-blur-[2px] ${
+                isMemoryClosing ? "memory-overlay-out" : "memory-overlay"
+              }`}
             />
             <section
               role="dialog"
               aria-modal="true"
               aria-label="留下回忆"
-              className="memory-sheet absolute inset-x-0 bottom-0 flex min-h-dvh flex-col rounded-t-[24px] bg-[#23262d] px-5 pb-[max(28px,env(safe-area-inset-bottom))] pt-[190px] shadow-[0_-24px_60px_rgba(0,0,0,0.45)]"
+              onAnimationEnd={(event) => {
+                if (!isMemoryClosing || event.target !== event.currentTarget) {
+                  return;
+                }
+
+                setIsMemoryOpen(false);
+                setIsMemoryClosing(false);
+
+                if (shouldOpenMemoryTicket) {
+                  setShouldOpenMemoryTicket(false);
+                  setIsMemoryTicketOpen(true);
+                  return;
+                }
+
+                setSelectedMemoryMood("");
+                setMemoryNote("");
+              }}
+              className={`absolute inset-x-0 bottom-0 flex h-full flex-col rounded-t-[24px] bg-[#23262d] px-5 pb-[max(28px,env(safe-area-inset-bottom))] pt-[190px] shadow-[0_-24px_60px_rgba(0,0,0,0.45)] ${
+                isMemoryClosing ? "memory-sheet-out" : "memory-sheet"
+              }`}
             >
               <button
                 type="button"
@@ -1245,10 +1660,10 @@ export function CollectingPage({ activityId }: { activityId: string }) {
             type="button"
             aria-label="收起今晚票根并返回我的活动"
             onClick={archiveMemory}
-            className="memory-ticket-overlay fixed inset-y-0 left-1/2 z-[100] block w-full max-w-[393px] -translate-x-1/2 overflow-hidden bg-[#090a0c] text-left"
+            className="memory-ticket-overlay phone-fixed z-[100] block bg-[#090a0c] text-left"
           >
-            <article className="memory-ticket flex min-h-dvh w-full flex-col overflow-hidden bg-[#23262d]">
-              <div className="relative h-[62dvh] min-h-[500px] overflow-hidden">
+            <article className="memory-ticket flex h-full w-full flex-col overflow-hidden bg-[#23262d]">
+              <div className="relative h-[528px] overflow-hidden">
                 <img
                   src={revealedMovie.src}
                   alt={revealedMovie.title}

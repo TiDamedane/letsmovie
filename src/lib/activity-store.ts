@@ -1,10 +1,16 @@
 export type ActivityStatus = "collecting" | "picking" | "selected";
 
 export type ActivityMemory = {
-  memberId: string;
-  memberName: string;
+  id?: string;
+  activityId?: string;
+  participantId: string;
+  participantName: string;
+  participantAvatar: string;
+  memberId?: string;
+  memberName?: string;
   emoji: string;
   note: string;
+  content?: string;
   createdAt: string;
 };
 

@@ -1,21 +1,23 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   MoreHorizontal,
 } from "lucide-react";
-import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
-import memberOneImage from "../../picture/user/IMG_20260611_210255.jpg";
-import memberTwoImage from "../../picture/user/IMG_20260611_210306.jpg";
-import memberThreeImage from "../../picture/user/IMG_20260611_210318.jpg";
-import memberFourImage from "../../picture/user/IMG_20260611_210333.jpg";
 import {
   deleteActivity,
   getActivity,
+  updateActivity,
   type ActivityMemory,
 } from "@/lib/activity-store";
 import { getMovieById } from "@/lib/movie-database";
+import { fetchActivityMemories } from "@/lib/supabase-memory";
 
-const participants = [
+const hostImage = "";
+const memberOneImage = "";
+const memberTwoImage = "";
+const memberThreeImage = "";
+const memberFourImage = "";
+const legacyParticipants = [
   { id: "xiaoyang", name: "小杨", src: hostImage },
   { id: "member-one", name: "成员 1", src: memberOneImage },
   { id: "member-two", name: "成员 2", src: memberTwoImage },
@@ -29,7 +31,7 @@ function formatMemoryDate(date: string) {
 }
 
 export function MemoryDetailPage({ activityId }: { activityId: string }) {
-  const activity = getActivity(activityId);
+  const [activity, setActivity] = useState(() => getActivity(activityId));
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [isActionsClosing, setIsActionsClosing] = useState(false);
@@ -44,6 +46,9 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
     return [
       {
         memberId: "xiaoyang",
+        participantId: "xiaoyang",
+        participantName: "小杨",
+        participantAvatar: "",
         memberName: "小杨",
         emoji: activity.memoryEmoji,
         note: activity.memoryNote ?? "",
@@ -55,8 +60,39 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
     ];
   }, [activity]);
 
+  useEffect(() => {
+    let isActive = true;
+
+    fetchActivityMemories(activityId)
+      .then((remoteMemories) => {
+        if (!isActive || remoteMemories.length === 0) return;
+        const nextActivity = updateActivity(activityId, {
+          memories: remoteMemories,
+        });
+        setActivity((currentActivity) => nextActivity ?? currentActivity);
+      })
+      .catch(() => {
+        // Local memories are still available for offline/dev mode.
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [activityId]);
+
+  useEffect(() => {
+    if (selectedMemberId || memories.length === 0) return;
+    setSelectedMemberId(memories[0].participantId ?? memories[0].memberId ?? "");
+  }, [memories, selectedMemberId]);
+
+  const memoryParticipants = memories.map((memory) => ({
+    id: memory.participantId ?? memory.memberId ?? "",
+    name: memory.participantName ?? memory.memberName ?? "",
+    src: memory.participantAvatar,
+  }));
+
   const selectedMemory = memories.find(
-    (memory) => memory.memberId === selectedMemberId,
+    (memory) => (memory.participantId ?? memory.memberId) === selectedMemberId,
   );
   const selectedMovie = activity?.selectedMovieId
     ? getMovieById(activity.selectedMovieId)
@@ -85,14 +121,14 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
   }
 
   return (
-    <main className="flex min-h-dvh justify-center bg-[#090a0c] text-[#f8f4ed]">
-      <div className="relative min-h-dvh w-full max-w-[393px] overflow-hidden bg-[#090a0c]">
+    <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
+      <div className="phone-canvas bg-[#090a0c]">
         <article
-          className={`memory-ticket flex min-h-dvh w-full flex-col overflow-hidden bg-[#23262d] ${
-            isClosing ? "memory-ticket-exit" : ""
+          className={`memory-ticket flex h-full w-full flex-col overflow-hidden bg-[#23262d] ${
+            isClosing ? "detail-page-exit" : ""
           }`}
         >
-          <div className="relative h-[62dvh] min-h-[500px] overflow-hidden">
+          <div className="relative h-[528px] overflow-hidden">
             <img
               src={selectedMovie.src}
               alt={selectedMovie.title}
@@ -138,7 +174,7 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
             </div>
 
             <div className="mt-7 flex flex-wrap items-center justify-between gap-x-4 gap-y-4">
-              {participants.map((participant) => {
+              {memoryParticipants.map((participant) => {
                 const isSelected = selectedMemberId === participant.id;
                 return (
                   <button
@@ -153,11 +189,15 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
                         : "border-transparent"
                     }`}
                   >
-                    <img
-                      src={participant.src}
-                      alt=""
-                      className="size-10 rounded-full object-cover"
-                    />
+                    {participant.src ? (
+                      <img
+                        src={participant.src}
+                        alt=""
+                        className="size-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="block size-10 rounded-full bg-[#2b2f36]" />
+                    )}
                   </button>
                 );
               })}
@@ -170,7 +210,18 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
                   <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#23262d] text-[21px]">
                     {selectedMemory.emoji}
                   </span>
-                  <p className="flex min-h-9 items-center text-[13px] leading-5 text-[#f8f4ed]/78">
+                  <div className="flex min-h-9 flex-col justify-center">
+                    <span className="text-[12px] font-medium text-[#f8f4ed]/85">
+                      {selectedMemory.participantName ??
+                        selectedMemory.memberName}
+                    </span>
+                    <p className="mt-0.5 text-[13px] leading-5 text-[#f8f4ed]/68">
+                      {selectedMemory.note ||
+                        selectedMemory.content ||
+                        "没有留下文字"}
+                    </p>
+                  </div>
+                  <p className="hidden">
                     {selectedMemory.note || "没有留下文字"}
                   </p>
                 </div>
@@ -180,7 +231,7 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
         </article>
 
         {isActionsOpen && (
-          <div className="fixed inset-y-0 left-1/2 z-50 w-full max-w-[393px] -translate-x-1/2 overflow-hidden">
+          <div className="phone-fixed z-50">
             <button
               type="button"
               aria-label="关闭回忆操作"

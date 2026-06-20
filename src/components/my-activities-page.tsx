@@ -65,15 +65,15 @@ export function MyActivitiesPage() {
           ),
         );
         setArchiveExitActivityIds(new Set());
-      }, 620);
+      }, 320);
 
       return () => window.clearTimeout(timer);
     }
   }, []);
 
   return (
-    <main className="flex min-h-dvh justify-center bg-[#090a0c] text-[#f8f4ed]">
-      <div className="relative min-h-dvh w-full max-w-[393px] bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)]">
+    <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
+      <div className="phone-canvas bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)]">
         <div className="px-7 pb-36 pt-[72px]">
           <h1 className="text-[28px] font-medium leading-none tracking-[-0.04em] text-[#f8f4ed]">
             我的活动

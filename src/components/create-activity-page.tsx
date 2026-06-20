@@ -4,7 +4,6 @@ import {
   CalendarDays,
   Check,
   MapPin,
-  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -14,6 +13,8 @@ import {
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
+import { createParticipantId, saveParticipant } from "@/lib/participant-store";
+import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
 
 const titleLimit = 30;
 const noteLimit = 100;
@@ -278,6 +279,11 @@ export function CreateActivityPage() {
       selectedMovieId:
         selectionMode === "confirmed" ? selectedMovies[0].id : undefined,
     });
+    saveParticipant(activity.id, {
+      participantId: createParticipantId(),
+      nickname: "小杨",
+      avatarUrl: hostImage,
+    });
 
     if (selectionMode === "confirmed") {
       window.sessionStorage.setItem(
@@ -290,13 +296,13 @@ export function CreateActivityPage() {
   };
 
   return (
-    <main className="flex min-h-dvh justify-center overflow-hidden bg-[#090a0c] text-[#f8f4ed]">
+    <main className="phone-stage overflow-hidden bg-[#090a0c] text-[#f8f4ed]">
       <section
         onAnimationEnd={(event) => {
           if (!isClosing || event.target !== event.currentTarget) return;
           window.location.hash = "#/";
         }}
-        className={`relative min-h-dvh w-full max-w-[393px] overflow-hidden bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.36)] ${
+        className={`phone-canvas bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.36)] ${
           isClosing ? "create-activity-sheet-out" : "create-activity-sheet"
         }`}
       >
@@ -317,7 +323,7 @@ export function CreateActivityPage() {
         </header>
 
         <div
-          className={`relative z-10 flex min-h-[calc(100dvh-88px)] flex-col px-7 pb-[max(22px,env(safe-area-inset-bottom))] ${
+          className={`relative z-10 flex h-[764px] min-h-0 flex-col overflow-hidden px-7 pb-[max(22px,env(safe-area-inset-bottom))] ${
             step === "movies" ? "pt-0" : "pt-10"
           }`}
         >
@@ -460,8 +466,11 @@ export function CreateActivityPage() {
           )}
 
           {step === "movies" && selectionMode && (
-            <div key="movies" className="create-step-panel flex flex-1 flex-col pt-2">
-              <form onSubmit={submitSearch} className="relative mt-2">
+            <div
+              key="movies"
+              className="create-step-panel flex h-full min-h-0 flex-col pt-2"
+            >
+              <form onSubmit={submitSearch} className="relative mt-2 shrink-0">
                 <Search
                   aria-hidden="true"
                   className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[#f8f4ed]/48"
@@ -506,8 +515,10 @@ export function CreateActivityPage() {
                       return (
                         <article
                           key={movie.id}
-                          className={`search-result-enter relative min-w-0 rounded-[16px] transition-colors duration-200 ${
-                            isSelected ? "bg-[#8b1e3f]/24" : "bg-transparent"
+                          className={`search-result-enter movie-search-card relative min-w-0 overflow-hidden rounded-[16px] border ${
+                            isSelected
+                              ? "movie-search-card-selected"
+                              : "border-transparent bg-transparent"
                           }`}
                         >
                           <button
@@ -520,11 +531,17 @@ export function CreateActivityPage() {
                             }
                             className="block w-full rounded-[16px] text-left transition duration-200 active:scale-[0.98]"
                           >
-                            <img
-                              src={movie.src}
-                              alt={movie.title}
-                              className="aspect-[2/3] w-full rounded-[16px] object-cover"
-                            />
+                            <span className="relative block overflow-hidden rounded-[16px]">
+                              <img
+                                src={movie.src}
+                                alt={movie.title}
+                                className="aspect-[2/3] w-full object-cover"
+                              />
+                              <span
+                                aria-hidden="true"
+                                className="movie-search-poster-overlay absolute inset-0 bg-[#8b1e3f]"
+                              />
+                            </span>
                             <span className="block px-1 pb-1 pt-2">
                               <span className="block text-[12px] leading-[17px] text-[#f8f4ed]">
                                 {movie.title}
@@ -536,13 +553,9 @@ export function CreateActivityPage() {
                           </button>
                           <span
                             aria-hidden="true"
-                            className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)] transition duration-200"
+                            className="movie-search-selected-indicator absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)]"
                           >
-                            {isSelected ? (
-                              <Check className="size-4" strokeWidth={2.2} />
-                            ) : (
-                              <Plus className="size-4" strokeWidth={2.2} />
-                            )}
+                            <Check className="size-4" strokeWidth={2.2} />
                           </span>
                         </article>
                       );
@@ -567,7 +580,7 @@ export function CreateActivityPage() {
                 )}
               </div>
 
-              <div className="pt-5">
+              <div className="shrink-0 pt-4">
                 <button
                   type="button"
                   onClick={submitActivity}
@@ -582,7 +595,7 @@ export function CreateActivityPage() {
         </div>
 
         {isTimePickerOpen && (
-          <div className="fixed inset-y-0 left-1/2 z-50 w-full max-w-[393px] -translate-x-1/2">
+          <div className="phone-fixed z-50">
             <button
               type="button"
               aria-label="关闭日期选择器"

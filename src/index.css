@@ -28,6 +28,33 @@ body {
   overflow-x: hidden;
 }
 
+.phone-stage {
+  display: flex;
+  min-height: 100vh;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.phone-canvas {
+  position: relative;
+  width: 393px;
+  min-width: 393px;
+  max-width: 393px;
+  height: 852px;
+  min-height: 852px;
+  max-height: 852px;
+  flex: none;
+  overflow: hidden;
+}
+
+.phone-fixed {
+  position: absolute;
+  inset: 0;
+  width: 393px;
+  height: 852px;
+  overflow: hidden;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -88,16 +115,47 @@ a {
 }
 
 .activity-card-archive-exit {
-  animation: activity-card-archive-exit 600ms
-    cubic-bezier(0.7, 0, 0.84, 0) both;
+  animation: activity-card-archive-exit 300ms ease-out both;
+}
+
+.bottom-sheet-overlay-in {
+  animation: bottom-sheet-overlay-in 300ms ease-out both;
+}
+
+.bottom-sheet-overlay-out {
+  pointer-events: none;
+  animation: bottom-sheet-overlay-out 300ms ease-in both;
+}
+
+.bottom-sheet-standard {
+  animation: bottom-sheet-standard-in 300ms cubic-bezier(0.16, 1, 0.3, 1)
+    both;
+}
+
+.bottom-sheet-standard-closing {
+  pointer-events: none;
+  animation: bottom-sheet-standard-out 300ms cubic-bezier(0.7, 0, 0.84, 0)
+    both;
 }
 
 .memory-overlay {
-  animation: time-picker-overlay-in 300ms ease-out both;
+  animation: bottom-sheet-overlay-in 300ms ease-out both;
+}
+
+.memory-overlay-out {
+  pointer-events: none;
+  animation: bottom-sheet-overlay-out 300ms ease-in both;
 }
 
 .memory-sheet {
-  animation: memory-sheet-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: bottom-sheet-standard-in 300ms cubic-bezier(0.16, 1, 0.3, 1)
+    both;
+}
+
+.memory-sheet-out {
+  pointer-events: none;
+  animation: bottom-sheet-standard-out 300ms cubic-bezier(0.7, 0, 0.84, 0)
+    both;
 }
 
 .memory-ticket-overlay {
@@ -109,11 +167,12 @@ a {
 }
 
 .memory-ticket.memory-ticket-exit {
-  animation: memory-ticket-exit 420ms cubic-bezier(0.7, 0, 0.84, 0) both;
+  animation: detail-page-exit 420ms cubic-bezier(0.7, 0, 0.84, 0) both;
 }
 
 .memory-action-sheet {
-  animation: memory-sheet-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: bottom-sheet-standard-in 300ms cubic-bezier(0.16, 1, 0.3, 1)
+    both;
 }
 
 .memory-ticket-title {
@@ -187,9 +246,10 @@ a {
   animation: reveal-stage-in 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.activity-detail-exit {
+.activity-detail-exit,
+.detail-page-exit {
   pointer-events: none;
-  animation: memory-ticket-exit 420ms cubic-bezier(0.7, 0, 0.84, 0) both;
+  animation: detail-page-exit 420ms cubic-bezier(0.7, 0, 0.84, 0) both;
 }
 
 .reveal-reel-poster {
@@ -229,21 +289,23 @@ a {
 }
 
 .time-picker-sheet {
-  animation: time-picker-sheet-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: bottom-sheet-standard-in 300ms cubic-bezier(0.16, 1, 0.3, 1)
+    both;
 }
 
 .time-picker-sheet-out {
   pointer-events: none;
-  animation: time-picker-sheet-out 300ms cubic-bezier(0.7, 0, 0.84, 0) both;
+  animation: bottom-sheet-standard-out 300ms cubic-bezier(0.7, 0, 0.84, 0)
+    both;
 }
 
 .time-picker-overlay-in {
-  animation: time-picker-overlay-in 300ms ease-out both;
+  animation: bottom-sheet-overlay-in 300ms ease-out both;
 }
 
 .time-picker-overlay-out {
   pointer-events: none;
-  animation: time-picker-overlay-out 300ms ease-in both;
+  animation: bottom-sheet-overlay-out 300ms ease-in both;
 }
 
 .time-wheel {
@@ -264,11 +326,14 @@ a {
 }
 
 .recommendation-sheet {
-  animation: recommendation-sheet-in 200ms ease-out both;
+  animation: bottom-sheet-standard-in 300ms cubic-bezier(0.16, 1, 0.3, 1)
+    both;
 }
 
 .recommendation-sheet-closing {
-  animation: recommendation-sheet-out 200ms ease-in both;
+  pointer-events: none;
+  animation: bottom-sheet-standard-out 300ms cubic-bezier(0.7, 0, 0.84, 0)
+    both;
 }
 
 .start-confirmation-dialog {
@@ -312,15 +377,83 @@ a {
   animation: search-result-in 200ms ease-out both;
 }
 
-@keyframes recommendation-sheet-in {
+.movie-search-card {
+  transition:
+    border-color 300ms ease,
+    background-color 300ms ease,
+    box-shadow 420ms ease;
+}
+
+.movie-search-card-selected {
+  border-color: #8b1e3f;
+  background-color: rgb(139 30 63 / 0.08);
+  box-shadow:
+    0 0 0 1px rgb(139 30 63 / 0.38),
+    0 14px 34px rgb(80 9 31 / 0.26);
+}
+
+.movie-search-poster-overlay {
+  opacity: 0;
+  transition: opacity 300ms ease-out 75ms;
+}
+
+.movie-search-card-selected .movie-search-poster-overlay {
+  opacity: 0.22;
+}
+
+.movie-search-selected-indicator {
+  opacity: 0;
+  transform: scale(0.86);
+  transition:
+    opacity 300ms ease-out,
+    transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.movie-search-card-selected .movie-search-selected-indicator {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@keyframes bottom-sheet-standard-in {
   from {
-    transform: translateY(18px);
+    transform: translateY(100%);
   }
 
   to {
     transform: translateY(0);
   }
 }
+
+@keyframes bottom-sheet-standard-out {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes bottom-sheet-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes bottom-sheet-overlay-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
 
 @keyframes create-activity-sheet-in {
   from {
@@ -354,45 +487,9 @@ a {
   }
 }
 
-@keyframes time-picker-sheet-in {
-  from {
-    transform: translateY(100%);
-  }
 
-  to {
-    transform: translateY(0);
-  }
-}
 
-@keyframes time-picker-sheet-out {
-  from {
-    transform: translateY(0);
-  }
 
-  to {
-    transform: translateY(100%);
-  }
-}
-
-@keyframes time-picker-overlay-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes time-picker-overlay-out {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0;
-  }
-}
 
 @keyframes start-confirmation-content-in {
   from {
@@ -406,15 +503,6 @@ a {
   }
 }
 
-@keyframes recommendation-sheet-out {
-  from {
-    transform: translateY(0);
-  }
-
-  to {
-    transform: translateY(100%);
-  }
-}
 
 @keyframes start-confirmation-in {
   from {
@@ -514,19 +602,10 @@ a {
 
   to {
     opacity: 0;
-    transform: translateY(-72px);
+    transform: translateY(-14px);
   }
 }
 
-@keyframes memory-sheet-in {
-  from {
-    transform: translateY(100%);
-  }
-
-  to {
-    transform: translateY(0);
-  }
-}
 
 @keyframes memory-ticket-in {
   from {
@@ -540,7 +619,7 @@ a {
   }
 }
 
-@keyframes memory-ticket-exit {
+@keyframes detail-page-exit {
   from {
     opacity: 1;
     transform: translateY(0);
