@@ -4,7 +4,6 @@ import {
   CalendarDays,
   Check,
   MapPin,
-  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -14,6 +13,8 @@ import {
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
+import { createParticipantId, saveParticipant } from "@/lib/participant-store";
+import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
 
 const titleLimit = 30;
 const noteLimit = 100;
@@ -278,6 +279,11 @@ export function CreateActivityPage() {
       selectedMovieId:
         selectionMode === "confirmed" ? selectedMovies[0].id : undefined,
     });
+    saveParticipant(activity.id, {
+      participantId: createParticipantId(),
+      nickname: "小杨",
+      avatarUrl: hostImage,
+    });
 
     if (selectionMode === "confirmed") {
       window.sessionStorage.setItem(
@@ -286,7 +292,8 @@ export function CreateActivityPage() {
       );
     }
 
-    window.location.hash = "#/";
+    window.location.hash =
+      selectionMode === "random" ? `#/activities/${activity.id}` : "#/";
   };
 
   return (
@@ -506,8 +513,10 @@ export function CreateActivityPage() {
                       return (
                         <article
                           key={movie.id}
-                          className={`search-result-enter relative min-w-0 rounded-[16px] transition-colors duration-200 ${
-                            isSelected ? "bg-[#8b1e3f]/24" : "bg-transparent"
+                          className={`search-result-enter movie-search-card relative min-w-0 overflow-hidden rounded-[16px] border ${
+                            isSelected
+                              ? "movie-search-card-selected"
+                              : "border-transparent bg-transparent"
                           }`}
                         >
                           <button
@@ -520,11 +529,17 @@ export function CreateActivityPage() {
                             }
                             className="block w-full rounded-[16px] text-left transition duration-200 active:scale-[0.98]"
                           >
-                            <img
-                              src={movie.src}
-                              alt={movie.title}
-                              className="aspect-[2/3] w-full rounded-[16px] object-cover"
-                            />
+                            <span className="relative block overflow-hidden rounded-[16px]">
+                              <img
+                                src={movie.src}
+                                alt={movie.title}
+                                className="aspect-[2/3] w-full object-cover"
+                              />
+                              <span
+                                aria-hidden="true"
+                                className="movie-search-poster-overlay absolute inset-0 bg-[#8b1e3f]"
+                              />
+                            </span>
                             <span className="block px-1 pb-1 pt-2">
                               <span className="block text-[12px] leading-[17px] text-[#f8f4ed]">
                                 {movie.title}
@@ -536,13 +551,9 @@ export function CreateActivityPage() {
                           </button>
                           <span
                             aria-hidden="true"
-                            className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)] transition duration-200"
+                            className="movie-search-selected-indicator absolute bottom-2 right-2 grid size-8 place-items-center rounded-full bg-[#8b1e3f] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.42)]"
                           >
-                            {isSelected ? (
-                              <Check className="size-4" strokeWidth={2.2} />
-                            ) : (
-                              <Plus className="size-4" strokeWidth={2.2} />
-                            )}
+                            <Check className="size-4" strokeWidth={2.2} />
                           </span>
                         </article>
                       );

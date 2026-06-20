@@ -65,7 +65,7 @@ export function MyActivitiesPage() {
           ),
         );
         setArchiveExitActivityIds(new Set());
-      }, 620);
+      }, 320);
 
       return () => window.clearTimeout(timer);
     }

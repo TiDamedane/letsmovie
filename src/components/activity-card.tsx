@@ -8,12 +8,7 @@ import memberTwoImage from "../../picture/user/IMG_20260611_210306.jpg";
 import memberThreeImage from "../../picture/user/IMG_20260611_210318.jpg";
 import memberFourImage from "../../picture/user/IMG_20260611_210333.jpg";
 
-const members = [
-  memberOneImage,
-  memberTwoImage,
-  memberThreeImage,
-  memberFourImage,
-];
+const members: string[] = [];
 
 function formatActivityDate(activity: Activity) {
   const [year, month, day] = activity.date.split(".");
@@ -115,9 +110,11 @@ export function ActivityCard({
                     className="size-8 rounded-full object-cover shadow-sm"
                   />
                 ))}
-                <div className="grid size-8 place-items-center rounded-full bg-[#25272c] text-[9px] font-medium text-[#f8f4ed] shadow-sm">
-                  +3
-                </div>
+                {members.length > 4 && (
+                  <div className="grid size-8 place-items-center rounded-full bg-[#25272c] text-[9px] font-medium text-[#f8f4ed] shadow-sm">
+                    +{members.length - 4}
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -22,14 +22,21 @@ function App() {
   const isCreateActivityPage = hash.startsWith("#/activities/new");
   const memoryMatch = hash.match(/^#\/memories\/([^/]+)$/);
   const activityMatch = hash.match(/^#\/activities\/([^/]+)$/);
+  const sharedActivityMatch = hash.match(/^#\/activity\/([^/]+)$/);
 
   if (isCreateActivityPage) return <CreateActivityPage />;
   if (memoryMatch) {
     return <MemoryDetailPage activityId={decodeURIComponent(memoryMatch[1])} />;
   }
   if (hash === "#/memories") return <MyMemoriesPage />;
-  if (activityMatch) {
-    return <CollectingPage activityId={decodeURIComponent(activityMatch[1])} />;
+  if (activityMatch || sharedActivityMatch) {
+    return (
+      <CollectingPage
+        activityId={decodeURIComponent(
+          (activityMatch ?? sharedActivityMatch)?.[1] ?? "",
+        )}
+      />
+    );
   }
   return <MyActivitiesPage />;
 }
