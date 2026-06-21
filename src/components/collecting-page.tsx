@@ -7,6 +7,8 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type FormEvent,
+  type PointerEvent,
+  type WheelEvent,
 } from "react";
 import {
   ArrowLeft,
@@ -83,6 +85,58 @@ const selectedCardRotations = [
   2.5,
 ];
 const memoryMoods = ["😭", "😂", "😅", "😡", "😌", "😍", "😴"];
+const avatarCropMinZoom = 1;
+const avatarCropMaxZoom = 2.6;
+
+type AvatarCrop = { x: number; y: number; zoom: number };
+type AvatarCropPointer = { x: number; y: number };
+type AvatarCropGesture = {
+  crop: AvatarCrop;
+  centerX: number;
+  centerY: number;
+  distance: number | null;
+  surfaceSize: number;
+};
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeAvatarCrop(crop: AvatarCrop): AvatarCrop {
+  const zoom = clampNumber(crop.zoom, avatarCropMinZoom, avatarCropMaxZoom);
+  const maxPan = Math.min(100, Math.max(0, (zoom - 1) * 100));
+
+  return {
+    x: clampNumber(crop.x, -maxPan, maxPan),
+    y: clampNumber(crop.y, -maxPan, maxPan),
+    zoom,
+  };
+}
+
+function getPointerCenter(pointers: AvatarCropPointer[]) {
+  const total = pointers.reduce(
+    (position, pointer) => ({
+      x: position.x + pointer.x,
+      y: position.y + pointer.y,
+    }),
+    { x: 0, y: 0 },
+  );
+
+  return {
+    x: total.x / pointers.length,
+    y: total.y / pointers.length,
+  };
+}
+
+function getPointerDistance(
+  firstPointer: AvatarCropPointer,
+  secondPointer: AvatarCropPointer,
+) {
+  return Math.hypot(
+    firstPointer.x - secondPointer.x,
+    firstPointer.y - secondPointer.y,
+  );
+}
 
 function formatActivityDate(activity: Activity) {
   const [year, month, day] = activity.date.split(".");
@@ -245,9 +299,112 @@ export function CollectingPage({
     useState(0);
   const recommendationPanelRef = useRef<HTMLDivElement>(null);
   const rollingMovieRef = useRef<Movie | null>(null);
+  const participantAvatarInputRef = useRef<HTMLInputElement>(null);
+  const participantAvatarCropRef = useRef<AvatarCrop>(participantAvatarCrop);
+  const avatarCropPointersRef = useRef<Map<number, AvatarCropPointer>>(
+    new Map(),
+  );
+  const avatarCropGestureRef = useRef<AvatarCropGesture | null>(null);
   const inviteUrl = `${window.location.origin}${
     window.location.pathname
   }#/activity/${encodeURIComponent(activityId)}`;
+
+  const updateParticipantAvatarCrop = useCallback(
+    (updater: AvatarCrop | ((crop: AvatarCrop) => AvatarCrop)) => {
+      setParticipantAvatarCrop((currentCrop) => {
+        const nextCrop = normalizeAvatarCrop(
+          typeof updater === "function" ? updater(currentCrop) : updater,
+        );
+        participantAvatarCropRef.current = nextCrop;
+        return nextCrop;
+      });
+    },
+    [],
+  );
+
+  const resetAvatarCropGesture = useCallback((surfaceSize: number) => {
+    const pointers = Array.from(avatarCropPointersRef.current.values());
+    if (pointers.length === 0) {
+      avatarCropGestureRef.current = null;
+      return;
+    }
+
+    const center = getPointerCenter(pointers);
+    avatarCropGestureRef.current = {
+      crop: participantAvatarCropRef.current,
+      centerX: center.x,
+      centerY: center.y,
+      distance:
+        pointers.length > 1 ? getPointerDistance(pointers[0], pointers[1]) : null,
+      surfaceSize,
+    };
+  }, []);
+
+  const handleAvatarCropPointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      avatarCropPointersRef.current.set(event.pointerId, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+      resetAvatarCropGesture(event.currentTarget.getBoundingClientRect().width);
+    },
+    [resetAvatarCropGesture],
+  );
+
+  const handleAvatarCropPointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (!avatarCropPointersRef.current.has(event.pointerId)) return;
+
+      event.preventDefault();
+      avatarCropPointersRef.current.set(event.pointerId, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      const gesture = avatarCropGestureRef.current;
+      const pointers = Array.from(avatarCropPointersRef.current.values());
+      if (!gesture || pointers.length === 0) return;
+
+      const center = getPointerCenter(pointers);
+      const panScale = 180 / gesture.surfaceSize;
+      const nextZoom =
+        pointers.length > 1 && gesture.distance
+          ? gesture.crop.zoom *
+            (getPointerDistance(pointers[0], pointers[1]) / gesture.distance)
+          : gesture.crop.zoom;
+
+      updateParticipantAvatarCrop({
+        zoom: nextZoom,
+        x: gesture.crop.x - (center.x - gesture.centerX) * panScale,
+        y: gesture.crop.y - (center.y - gesture.centerY) * panScale,
+      });
+    },
+    [updateParticipantAvatarCrop],
+  );
+
+  const handleAvatarCropPointerEnd = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      avatarCropPointersRef.current.delete(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      resetAvatarCropGesture(event.currentTarget.getBoundingClientRect().width);
+    },
+    [resetAvatarCropGesture],
+  );
+
+  const handleAvatarCropWheel = useCallback(
+    (event: WheelEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      updateParticipantAvatarCrop((crop) => ({
+        ...crop,
+        zoom: crop.zoom - event.deltaY * 0.004,
+      }));
+    },
+    [updateParticipantAvatarCrop],
+  );
 
   const applyRemoteBundle = useCallback((bundle: RemoteActivityBundle) => {
     saveActivity(bundle.activity);
@@ -323,15 +480,51 @@ export function CollectingPage({
   const isSelectionComplete = selectedMovieCount === 3;
   const isMovieSelected = activity?.status === "selected" && revealedMovie;
   const currentParticipantName = participant?.nickname ?? currentUserName;
+  const currentParticipantRemoteRole = participant
+    ? remoteParticipants.find(
+        (remoteParticipant) =>
+          remoteParticipant.participantId === participant.participantId,
+      )?.role
+    : undefined;
+  const currentParticipantRole =
+    currentParticipantRemoteRole ?? (isSharedActivity ? "member" : "host");
+  const hostParticipant = useMemo(() => {
+    const remoteHost = remoteParticipants.find(
+      (remoteParticipant) => remoteParticipant.role === "host",
+    );
+
+    if (remoteHost?.avatarUrl) return remoteHost;
+    if (currentParticipantRole === "host" && participant?.avatarUrl) {
+      return {
+        participantId: participant.participantId,
+        nickname: participant.nickname,
+        avatarUrl: participant.avatarUrl,
+        role: "host" as const,
+      };
+    }
+
+    return null;
+  }, [currentParticipantRole, participant, remoteParticipants]);
+  const hostAvatarUrl = hostParticipant?.avatarUrl || hostImage;
   const visibleParticipants = useMemo(() => {
     const participantMap = new Map<
       string,
       { id: string; name: string; src: string }
     >();
+    const hostParticipantIds = new Set(
+      remoteParticipants
+        .filter((remoteParticipant) => remoteParticipant.role === "host")
+        .map((remoteParticipant) => remoteParticipant.participantId),
+    );
+
+    if (currentParticipantRole === "host" && participant) {
+      hostParticipantIds.add(participant.participantId);
+    }
 
     remoteParticipants
       .filter((remoteParticipant) => remoteParticipant.role === "member")
       .forEach((remoteParticipant) => {
+        if (hostParticipantIds.has(remoteParticipant.participantId)) return;
         if (!remoteParticipant.avatarUrl) return;
         participantMap.set(remoteParticipant.participantId, {
           id: remoteParticipant.participantId,
@@ -340,32 +533,24 @@ export function CollectingPage({
         });
       });
 
-    activity?.memories?.forEach((memory) => {
-      const id = memory.participantId ?? memory.memberId;
-      const name = memory.participantName ?? memory.memberName;
-      const src = memory.participantAvatar;
-      if (id && name && src) participantMap.set(id, { id, name, src });
-    });
-
-    if (participant?.avatarUrl) {
-      const participantRole =
-        remoteParticipants.find(
-          (remoteParticipant) =>
-            remoteParticipant.participantId === participant.participantId,
-        )?.role ?? (isSharedActivity ? "member" : "host");
-
-      if (participantRole === "member") {
-        participantMap.set(participant.participantId, {
-          id: participant.participantId,
-          name: participant.nickname,
-          src: participant.avatarUrl,
-        });
-      }
+    if (
+      participant?.avatarUrl &&
+      currentParticipantRole === "member" &&
+      !hostParticipantIds.has(participant.participantId)
+    ) {
+      participantMap.set(participant.participantId, {
+        id: participant.participantId,
+        name: participant.nickname,
+        src: participant.avatarUrl,
+      });
     }
 
     return Array.from(participantMap.values());
-  }, [activity?.memories, isSharedActivity, participant, remoteParticipants]);
-  const firstMember = visibleParticipants[0];
+  }, [currentParticipantRole, participant, remoteParticipants]);
+  const displayedParticipants = useMemo(
+    () => [...visibleParticipants].reverse(),
+    [visibleParticipants],
+  );
 
   const closeStartConfirmation = () => {
     if (isStartConfirmationClosing) return;
@@ -505,7 +690,7 @@ export function CollectingPage({
   useEffect(() => {
     if (!isRecommendationOpen || isRecommendationClosing) return;
 
-    const closeOnOutsidePress = (event: PointerEvent) => {
+    const closeOnOutsidePress = (event: globalThis.PointerEvent) => {
       if (
         recommendationPanelRef.current &&
         !recommendationPanelRef.current.contains(event.target as Node)
@@ -592,7 +777,9 @@ export function CollectingPage({
 
     setParticipantAvatarFile(file);
     setParticipantAvatarPreview(URL.createObjectURL(file));
-    setParticipantAvatarCrop({ x: 0, y: 0, zoom: 1 });
+    avatarCropPointersRef.current.clear();
+    avatarCropGestureRef.current = null;
+    updateParticipantAvatarCrop({ x: 0, y: 0, zoom: 1 });
   };
 
   const enterActivity = async () => {
@@ -614,11 +801,16 @@ export function CollectingPage({
           participantAvatarFile,
           participantAvatarCrop,
         );
-        avatarUrl = await uploadParticipantAvatar({
-          activityId,
-          participantId,
-          file: croppedAvatarFile,
-        });
+
+        try {
+          avatarUrl = await uploadParticipantAvatar({
+            activityId,
+            participantId,
+            file: croppedAvatarFile,
+          });
+        } catch {
+          // If cloud avatar upload fails, keep the join flow usable locally.
+        }
 
         if (!avatarUrl) {
           avatarUrl = await fileToDataUrl(croppedAvatarFile);
@@ -938,85 +1130,63 @@ export function CollectingPage({
               </h2>
 
               <div className="mt-7 flex flex-col items-center">
-                <label className="grid aspect-square size-20 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-full border border-[#f8f4ed]/12 bg-[#1c1f24] text-[12px] text-[#f8f4ed]/55 transition active:scale-95">
-                  {participantAvatarPreview ? (
-                    <img
-                      src={participantAvatarPreview}
-                      alt=""
-                      className="aspect-square size-full rounded-full object-cover"
-                      style={{
-                        objectPosition: `${50 + participantAvatarCrop.x / 2}% ${
-                          50 + participantAvatarCrop.y / 2
-                        }%`,
-                        transform: `scale(${participantAvatarCrop.zoom})`,
-                      }}
-                    />
-                  ) : (
-                    <span>上传头像</span>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleParticipantAvatarChange}
-                    className="sr-only"
-                  />
-                </label>
+                {participantAvatarPreview ? (
+                  <div className="relative">
+                    <div
+                      role="img"
+                      aria-label="头像裁剪预览"
+                      onPointerDown={handleAvatarCropPointerDown}
+                      onPointerMove={handleAvatarCropPointerMove}
+                      onPointerUp={handleAvatarCropPointerEnd}
+                      onPointerCancel={handleAvatarCropPointerEnd}
+                      onWheel={handleAvatarCropWheel}
+                      className="relative grid aspect-square size-28 touch-none select-none place-items-center overflow-hidden rounded-full border border-[#f8f4ed]/14 bg-[#1c1f24] shadow-[0_16px_40px_rgba(0,0,0,0.32)]"
+                    >
+                      <img
+                        src={participantAvatarPreview}
+                        alt=""
+                        draggable={false}
+                        className="pointer-events-none aspect-square size-full rounded-full object-cover"
+                        style={{
+                          objectPosition: `${
+                            50 + participantAvatarCrop.x / 2
+                          }% ${50 + participantAvatarCrop.y / 2}%`,
+                          transform: `scale(${participantAvatarCrop.zoom})`,
+                        }}
+                      />
+                      <div className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-inset ring-white/20" />
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="重新选择头像"
+                      onClick={() => participantAvatarInputRef.current?.click()}
+                      className="absolute bottom-1 right-1 grid size-8 place-items-center rounded-full border border-[#f8f4ed]/18 bg-[#a52e4e] text-[#f8f4ed] shadow-[0_8px_18px_rgba(0,0,0,0.36)] transition active:scale-95"
+                    >
+                      <Plus className="size-4" strokeWidth={1.9} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => participantAvatarInputRef.current?.click()}
+                    className="grid aspect-square size-20 shrink-0 place-items-center rounded-full border border-[#f8f4ed]/12 bg-[#1c1f24] text-[12px] text-[#f8f4ed]/55 transition active:scale-95"
+                  >
+                    上传头像
+                  </button>
+                )}
+                <input
+                  ref={participantAvatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onClick={(event) => {
+                    event.currentTarget.value = "";
+                  }}
+                  onChange={handleParticipantAvatarChange}
+                  className="sr-only"
+                />
                 <p className="mt-2 text-[12px] text-[#f8f4ed]/35">
                   可选，jpg / png / webp，2MB 内
                 </p>
-                {participantAvatarPreview && (
-                  <div className="mt-4 w-full space-y-3 rounded-[16px] bg-[#1c1f24]/72 px-4 py-3">
-                    <label className="block text-[11px] text-[#f8f4ed]/45">
-                      缩放
-                      <input
-                        type="range"
-                        min="1"
-                        max="2"
-                        step="0.01"
-                        value={participantAvatarCrop.zoom}
-                        onChange={(event) =>
-                          setParticipantAvatarCrop((crop) => ({
-                            ...crop,
-                            zoom: Number(event.target.value),
-                          }))
-                        }
-                        className="mt-2 w-full accent-[#a52e4e]"
-                      />
-                    </label>
-                    <label className="block text-[11px] text-[#f8f4ed]/45">
-                      左右
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={participantAvatarCrop.x}
-                        onChange={(event) =>
-                          setParticipantAvatarCrop((crop) => ({
-                            ...crop,
-                            x: Number(event.target.value),
-                          }))
-                        }
-                        className="mt-2 w-full accent-[#a52e4e]"
-                      />
-                    </label>
-                    <label className="block text-[11px] text-[#f8f4ed]/45">
-                      上下
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={participantAvatarCrop.y}
-                        onChange={(event) =>
-                          setParticipantAvatarCrop((crop) => ({
-                            ...crop,
-                            y: Number(event.target.value),
-                          }))
-                        }
-                        className="mt-2 w-full accent-[#a52e4e]"
-                      />
-                    </label>
-                  </div>
-                )}
               </div>
 
               <input
@@ -1131,37 +1301,37 @@ export function CollectingPage({
               </span>
               <div className="mt-3.5 flex items-center">
                 <img
-                  src={hostImage}
-                  alt="活动主持人"
+                  src={hostAvatarUrl}
+                  alt={hostParticipant?.nickname ?? "活动主持人"}
                   className="aspect-square size-10 shrink-0 rounded-full object-cover"
                 />
               </div>
             </div>
 
-            <div className="flex w-10 flex-col items-center">
-              <span className="text-center text-[14px] font-normal text-[#f8f4ed]/75">
+            <div className="flex flex-col items-end">
+              <span className="w-10 text-center text-[14px] font-normal text-[#f8f4ed]/75">
                 成员
               </span>
-              <div className="mt-3.5 flex items-center">
-                {firstMember ? (
+              <div className="mt-3.5 flex items-center justify-end gap-3">
+                {displayedParticipants.map((member) => (
                   <img
-                    src={firstMember.src}
-                    alt={firstMember.name}
+                    key={member.id}
+                    src={member.src}
+                    alt={member.name}
                     className="aspect-square size-10 shrink-0 rounded-full object-cover"
                   />
-                ) : (
-                  <button
-                    type="button"
-                    aria-label="邀请成员"
-                    onClick={() => {
-                      setIsInvitePromptClosing(false);
-                      setIsInvitePromptOpen(true);
-                    }}
-                    className="grid aspect-square size-10 shrink-0 place-items-center rounded-full bg-[#a52e4e] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.34)] transition active:scale-95"
-                  >
-                    <Plus className="size-4.5" strokeWidth={1.8} />
-                  </button>
-                )}
+                ))}
+                <button
+                  type="button"
+                  aria-label="邀请成员"
+                  onClick={() => {
+                    setIsInvitePromptClosing(false);
+                    setIsInvitePromptOpen(true);
+                  }}
+                  className="grid aspect-square size-10 shrink-0 place-items-center rounded-full bg-[#a52e4e] text-[#f8f4ed] shadow-[0_8px_20px_rgba(80,9,31,0.34)] transition active:scale-95"
+                >
+                  <Plus className="size-4.5" strokeWidth={1.8} />
+                </button>
               </div>
             </div>
           </div>

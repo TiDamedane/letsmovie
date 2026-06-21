@@ -299,20 +299,11 @@ export function CreateActivityPage() {
       // LocalStorage remains the fallback when cloud sync is unavailable.
     }
 
-    if (selectionMode === "confirmed") {
-      window.sessionStorage.setItem(
-        `letsmovie.activity-poster-reveal.${activity.id}`,
-        "pending",
-      );
-    } else {
-      window.sessionStorage.setItem(
-        `letsmovie.invite-prompt.${activity.id}`,
-        "pending",
-      );
-    }
-
-    window.location.hash =
-      selectionMode === "random" ? `#/activities/${activity.id}` : "#/";
+    window.sessionStorage.setItem(
+      `letsmovie.invite-prompt.${activity.id}`,
+      "pending",
+    );
+    window.location.hash = `#/activities/${activity.id}`;
   };
 
   return (
