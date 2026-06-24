@@ -24,10 +24,6 @@ import {
   X,
 } from "lucide-react";
 import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
-import memberOneImage from "../../picture/user/IMG_20260611_210255.jpg";
-import memberTwoImage from "../../picture/user/IMG_20260611_210306.jpg";
-import memberThreeImage from "../../picture/user/IMG_20260611_210318.jpg";
-import memberFourImage from "../../picture/user/IMG_20260611_210333.jpg";
 import {
   deleteActivity,
   getActivity,
@@ -53,8 +49,16 @@ import {
 import {
   createMemory,
   fetchActivityMemories,
+  isSupabaseConfigured,
   uploadParticipantAvatar,
 } from "@/lib/supabase-memory";
+import {
+  getCurrentParticipantMemory,
+  isActivityMemoryComplete,
+  mergeActivityParticipants,
+  mergeParticipantMemory,
+  type MemoryParticipant,
+} from "@/lib/memory-progress";
 import {
   deleteRemoteMovie,
   fetchRemoteActivityBundle,
@@ -67,13 +71,6 @@ import {
 } from "@/lib/supabase-activity";
 import { ActionDialog } from "@/components/action-dialog";
 
-const defaultAvatarPool = [
-  hostImage,
-  memberOneImage,
-  memberTwoImage,
-  memberThreeImage,
-  memberFourImage,
-];
 const currentUserName = "小杨";
 
 const selectedCardRotations = [
@@ -86,9 +83,10 @@ const selectedCardRotations = [
 ];
 const memoryMoods = ["😭", "😂", "😅", "😡", "😌", "😍", "😴"];
 const avatarCropMinZoom = 1;
-const avatarCropMaxZoom = 2.6;
+const avatarCropMaxZoom = 5;
 
 type AvatarCrop = { x: number; y: number; zoom: number };
+type AvatarImageDimensions = { width: number; height: number };
 type AvatarCropPointer = { x: number; y: number };
 type AvatarCropGesture = {
   crop: AvatarCrop;
@@ -102,14 +100,55 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function normalizeAvatarCrop(crop: AvatarCrop): AvatarCrop {
-  const zoom = clampNumber(crop.zoom, avatarCropMinZoom, avatarCropMaxZoom);
-  const maxPan = Math.min(100, Math.max(0, (zoom - 1) * 100));
+function getAvatarCropBaseSize(dimensions: AvatarImageDimensions | null) {
+  if (!dimensions?.width || !dimensions.height) {
+    return { width: 100, height: 100 };
+  }
+
+  const aspectRatio = dimensions.width / dimensions.height;
+  return aspectRatio >= 1
+    ? { width: aspectRatio * 100, height: 100 }
+    : { width: 100, height: (1 / aspectRatio) * 100 };
+}
+
+function getAvatarCropMaxPan(
+  zoom: number,
+  dimensions: AvatarImageDimensions | null,
+) {
+  const baseSize = getAvatarCropBaseSize(dimensions);
 
   return {
-    x: clampNumber(crop.x, -maxPan, maxPan),
-    y: clampNumber(crop.y, -maxPan, maxPan),
+    x: Math.max(0, (baseSize.width * zoom - 100) / 2),
+    y: Math.max(0, (baseSize.height * zoom - 100) / 2),
+  };
+}
+
+function normalizeAvatarCrop(
+  crop: AvatarCrop,
+  dimensions: AvatarImageDimensions | null = null,
+): AvatarCrop {
+  const zoom = clampNumber(crop.zoom, avatarCropMinZoom, avatarCropMaxZoom);
+  const maxPan = getAvatarCropMaxPan(zoom, dimensions);
+
+  return {
+    x: clampNumber(crop.x, -maxPan.x, maxPan.x),
+    y: clampNumber(crop.y, -maxPan.y, maxPan.y),
     zoom,
+  };
+}
+
+function getAvatarCropImageStyle(
+  crop: AvatarCrop,
+  dimensions: AvatarImageDimensions | null,
+): CSSProperties {
+  const baseSize = getAvatarCropBaseSize(dimensions);
+
+  return {
+    left: `calc(50% + ${crop.x}%)`,
+    top: `calc(50% + ${crop.y}%)`,
+    width: `${baseSize.width * crop.zoom}%`,
+    height: `${baseSize.height * crop.zoom}%`,
+    transform: "translate(-50%, -50%)",
   };
 }
 
@@ -171,12 +210,20 @@ async function cropAvatarFile(
 
     const baseCropSize = Math.min(image.naturalWidth, image.naturalHeight);
     const cropSize = baseCropSize / crop.zoom;
-    const maxOffsetX = (image.naturalWidth - cropSize) / 2;
-    const maxOffsetY = (image.naturalHeight - cropSize) / 2;
-    const sourceX =
-      image.naturalWidth / 2 - cropSize / 2 + (crop.x / 100) * maxOffsetX;
-    const sourceY =
-      image.naturalHeight / 2 - cropSize / 2 + (crop.y / 100) * maxOffsetY;
+    const sourceCenterX =
+      image.naturalWidth / 2 - (crop.x / 100) * (baseCropSize / crop.zoom);
+    const sourceCenterY =
+      image.naturalHeight / 2 - (crop.y / 100) * (baseCropSize / crop.zoom);
+    const sourceX = clampNumber(
+      sourceCenterX - cropSize / 2,
+      0,
+      image.naturalWidth - cropSize,
+    );
+    const sourceY = clampNumber(
+      sourceCenterY - cropSize / 2,
+      0,
+      image.naturalHeight - cropSize,
+    );
 
     context.drawImage(
       image,
@@ -209,6 +256,71 @@ function fileToDataUrl(file: File) {
   });
 }
 
+function MemoryTicketPreview({
+  activity,
+  movie,
+  memory,
+  onClose,
+  className = "",
+}: {
+  activity: Activity;
+  movie: Movie;
+  memory: ActivityMemory;
+  onClose: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label="收起今晚票根并返回我的活动"
+      onClick={onClose}
+      className={`memory-ticket-overlay phone-fixed block bg-[#090a0c] text-left ${className}`}
+    >
+      <article className="memory-ticket flex h-full w-full flex-col overflow-hidden bg-[#23262d]">
+        <div className="relative h-[590px] overflow-hidden">
+          <img
+            src={movie.src}
+            alt={movie.title}
+            className="size-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/62 via-transparent to-black/14" />
+          <span className="memory-ticket-title absolute right-7 top-8 text-[11px] leading-none tracking-[0.04em] text-[#f8f4ed]/80 [font-variant-numeric:lining-nums]">
+            NO.{activity.memoryTicketNumber ?? 1}
+          </span>
+          <h2 className="memory-ticket-title absolute inset-x-6 bottom-7 text-[34px] leading-[1.12] tracking-[-0.04em] text-[#f8f4ed] [text-shadow:0_3px_18px_rgba(0,0,0,0.48)]">
+            {activity.title}
+          </h2>
+        </div>
+
+        <div className="relative flex flex-1 flex-col px-6 pb-8 pt-8">
+          <span className="absolute -left-3 -top-3 size-6 rounded-full bg-[#090a0c]" />
+          <span className="absolute -right-3 -top-3 size-6 rounded-full bg-[#090a0c]" />
+
+          <h3 className="memory-ticket-title text-[25px] leading-9 tracking-[-0.035em] text-[#f8f4ed]">
+            {movie.title}
+          </h3>
+          <div className="mt-5 grid grid-cols-2 gap-10 text-[12px] text-[#f8f4ed]/52">
+            <span>{activity.location}</span>
+            <span>{formatMemoryTicketDate(activity)}</span>
+          </div>
+
+          <div className="mt-7">
+            <span className="grid size-10 place-items-center rounded-full bg-[#1c1f24] text-[23px]">
+              {memory.emoji}
+            </span>
+          </div>
+
+          {(memory.note || memory.content) && (
+            <p className="mt-6 text-[13px] leading-5 text-[#f8f4ed]/68">
+              {memory.note || memory.content}
+            </p>
+          )}
+        </div>
+      </article>
+    </button>
+  );
+}
+
 export function CollectingPage({
   activityId,
   isSharedActivity = false,
@@ -229,6 +341,8 @@ export function CollectingPage({
   const [participantAvatarFile, setParticipantAvatarFile] =
     useState<File | null>(null);
   const [participantAvatarPreview, setParticipantAvatarPreview] = useState("");
+  const [participantAvatarDimensions, setParticipantAvatarDimensions] =
+    useState<AvatarImageDimensions | null>(null);
   const [participantAvatarCrop, setParticipantAvatarCrop] = useState({
     x: 0,
     y: 0,
@@ -236,6 +350,12 @@ export function CollectingPage({
   });
   const [participantError, setParticipantError] = useState("");
   const [isSavingParticipant, setIsSavingParticipant] = useState(false);
+  const [isParticipantAvatarEditorOpen, setIsParticipantAvatarEditorOpen] =
+    useState(false);
+  const [
+    isParticipantAvatarEditorClosing,
+    setIsParticipantAvatarEditorClosing,
+  ] = useState(false);
   const [candidateMovies, setCandidateMovies] = useState<Movie[]>(() =>
     (getActivity(activityId)?.candidateMovieIds ?? [])
       .map(getMovieById)
@@ -309,17 +429,28 @@ export function CollectingPage({
     window.location.pathname
   }#/activity/${encodeURIComponent(activityId)}`;
 
+  useEffect(() => {
+    window.history.scrollRestoration = "manual";
+    window.scrollTo({ top: 0, left: 0 });
+    const timer = window.setTimeout(() => {
+      window.scrollTo({ top: 0, left: 0 });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [activityId]);
+
   const updateParticipantAvatarCrop = useCallback(
     (updater: AvatarCrop | ((crop: AvatarCrop) => AvatarCrop)) => {
       setParticipantAvatarCrop((currentCrop) => {
         const nextCrop = normalizeAvatarCrop(
           typeof updater === "function" ? updater(currentCrop) : updater,
+          participantAvatarDimensions,
         );
         participantAvatarCropRef.current = nextCrop;
         return nextCrop;
       });
     },
-    [],
+    [participantAvatarDimensions],
   );
 
   const resetAvatarCropGesture = useCallback((surfaceSize: number) => {
@@ -368,7 +499,7 @@ export function CollectingPage({
       if (!gesture || pointers.length === 0) return;
 
       const center = getPointerCenter(pointers);
-      const panScale = 180 / gesture.surfaceSize;
+      const panScale = 100 / gesture.surfaceSize;
       const nextZoom =
         pointers.length > 1 && gesture.distance
           ? gesture.crop.zoom *
@@ -377,8 +508,8 @@ export function CollectingPage({
 
       updateParticipantAvatarCrop({
         zoom: nextZoom,
-        x: gesture.crop.x - (center.x - gesture.centerX) * panScale,
-        y: gesture.crop.y - (center.y - gesture.centerY) * panScale,
+        x: gesture.crop.x + (center.x - gesture.centerX) * panScale,
+        y: gesture.crop.y + (center.y - gesture.centerY) * panScale,
       });
     },
     [updateParticipantAvatarCrop],
@@ -406,13 +537,63 @@ export function CollectingPage({
     [updateParticipantAvatarCrop],
   );
 
-  const applyRemoteBundle = useCallback((bundle: RemoteActivityBundle) => {
-    saveActivity(bundle.activity);
+  const handleParticipantAvatarImageLoad = useCallback(
+    (dimensions: AvatarImageDimensions) => {
+      setParticipantAvatarDimensions(dimensions);
+      setParticipantAvatarCrop((crop) => {
+        const nextCrop = normalizeAvatarCrop(crop, dimensions);
+        participantAvatarCropRef.current = nextCrop;
+        return nextCrop;
+      });
+    },
+    [],
+  );
+
+  const applyRemoteBundle = useCallback((
+    bundle: RemoteActivityBundle,
+    remoteMemories: ActivityMemory[] = [],
+  ) => {
     saveMovies(bundle.movies);
-    setActivity((currentActivity) => ({
-      ...bundle.activity,
-      memories: currentActivity?.memories ?? bundle.activity.memories,
-    }));
+    setActivity((currentActivity) => {
+      const storedActivity = currentActivity ?? getActivity(activityId);
+      const currentMemory = getCurrentParticipantMemory(
+        remoteMemories.length > 0
+          ? remoteMemories
+          : storedActivity?.memories,
+        participant,
+      );
+      const shouldKeepLocalMemoryFields =
+        remoteMemories.length === 0 && Boolean(currentMemory);
+      const mergedActivity = {
+        ...bundle.activity,
+        memoryEmoji:
+          currentMemory?.emoji ??
+          (shouldKeepLocalMemoryFields ? storedActivity?.memoryEmoji : undefined),
+        memoryNote:
+          (currentMemory?.note || currentMemory?.content) ??
+          (shouldKeepLocalMemoryFields ? storedActivity?.memoryNote : undefined),
+        memoryCreatedAt:
+          currentMemory?.createdAt ??
+          (shouldKeepLocalMemoryFields
+            ? storedActivity?.memoryCreatedAt
+            : undefined),
+        memoryTicketNumber: currentMemory
+          ? storedActivity?.memoryTicketNumber
+          : undefined,
+        memories:
+          remoteMemories.length > 0
+            ? remoteMemories
+            : storedActivity?.memories ?? bundle.activity.memories,
+        participants: mergeActivityParticipants(
+          storedActivity?.participants,
+          bundle.participants,
+        ),
+        archivedAt: storedActivity?.archivedAt ?? bundle.activity.archivedAt,
+      };
+
+      saveActivity(mergedActivity);
+      return mergedActivity;
+    });
     setCandidateMovies(bundle.movies);
     setRemoteParticipants(bundle.participants);
     setIsPicking(bundle.activity.status === "picking");
@@ -425,31 +606,61 @@ export function CollectingPage({
             null
         : null,
     );
-  }, []);
+  }, [activityId, participant]);
 
   useEffect(() => {
-    if (!activity || participant) return;
-    if (isSharedActivity) return;
-    const isLocalCreatorActivity = activity.id.startsWith("activity-");
-    if (!isLocalCreatorActivity) return;
+    if (!activity || !participant) return;
 
-    const creatorParticipant = {
-      participantId: createParticipantId(),
-      nickname: "小杨",
-      avatarUrl: hostImage,
+    const knownParticipants = mergeActivityParticipants(
+      activity.participants,
+      remoteParticipants,
+    );
+    const storedParticipant = knownParticipants.find(
+      (knownParticipant) =>
+        knownParticipant.participantId === participant.participantId,
+    );
+    const role = storedParticipant?.role ?? (isSharedActivity ? "member" : "host");
+    const nextParticipant = {
+      ...participant,
+      role,
+      createdAt: storedParticipant?.createdAt ?? new Date().toISOString(),
     };
-    saveParticipant(activityId, creatorParticipant);
-    setParticipant(creatorParticipant);
-  }, [activity, activityId, isSharedActivity, participant]);
+    const hasLatestProfile =
+      storedParticipant?.nickname === participant.nickname &&
+      storedParticipant?.avatarUrl === participant.avatarUrl;
+
+    if (storedParticipant && hasLatestProfile) return;
+
+    const nextActivity =
+      updateActivity(activityId, {
+        participants: mergeActivityParticipants(activity.participants, [
+          nextParticipant,
+        ]),
+      }) ?? activity;
+    setActivity(nextActivity);
+    setRemoteParticipants((participants) =>
+      mergeActivityParticipants(participants, [nextParticipant]),
+    );
+    upsertRemoteParticipant({
+      activityId,
+      participant,
+      role,
+    }).catch(() => {
+      // LocalStorage remains the fallback when cloud sync is unavailable.
+    });
+  }, [activity, activityId, isSharedActivity, participant, remoteParticipants]);
 
   useEffect(() => {
     let isActive = true;
 
     const refreshRemoteActivity = () => {
-      fetchRemoteActivityBundle(activityId)
-        .then((bundle) => {
+      Promise.all([
+        fetchRemoteActivityBundle(activityId),
+        fetchActivityMemories(activityId).catch(() => []),
+      ])
+        .then(([bundle, memories]) => {
           if (!isActive || !bundle) return;
-          applyRemoteBundle(bundle);
+          applyRemoteBundle(bundle, memories);
         })
         .catch(() => {
           // LocalStorage remains the fallback for offline/dev mode.
@@ -489,11 +700,6 @@ export function CollectingPage({
   const currentParticipantRole =
     currentParticipantRemoteRole ?? (isSharedActivity ? "member" : "host");
   const hostParticipant = useMemo(() => {
-    const remoteHost = remoteParticipants.find(
-      (remoteParticipant) => remoteParticipant.role === "host",
-    );
-
-    if (remoteHost?.avatarUrl) return remoteHost;
     if (currentParticipantRole === "host" && participant?.avatarUrl) {
       return {
         participantId: participant.participantId,
@@ -502,6 +708,12 @@ export function CollectingPage({
         role: "host" as const,
       };
     }
+
+    const remoteHost = remoteParticipants.find(
+      (remoteParticipant) => remoteParticipant.role === "host",
+    );
+
+    if (remoteHost?.avatarUrl) return remoteHost;
 
     return null;
   }, [currentParticipantRole, participant, remoteParticipants]);
@@ -551,6 +763,64 @@ export function CollectingPage({
     () => [...visibleParticipants].reverse(),
     [visibleParticipants],
   );
+  const memoryParticipantScope = useMemo<MemoryParticipant[]>(() => {
+    const participantMap = new Map<string, MemoryParticipant>();
+
+    activity?.participants?.forEach((storedParticipant) => {
+      participantMap.set(storedParticipant.participantId, {
+        participantId: storedParticipant.participantId,
+      });
+    });
+
+    remoteParticipants.forEach((remoteParticipant) => {
+      participantMap.set(remoteParticipant.participantId, {
+        participantId: remoteParticipant.participantId,
+      });
+    });
+
+    if (participant) {
+      participantMap.set(participant.participantId, {
+        participantId: participant.participantId,
+      });
+    }
+
+    return Array.from(participantMap.values());
+  }, [activity?.participants, participant, remoteParticipants]);
+  const currentParticipantMemory = useMemo(
+    () => getCurrentParticipantMemory(activity?.memories, participant),
+    [activity?.memories, participant],
+  );
+  const shouldShowCurrentParticipantTicket = Boolean(
+    activity &&
+      revealedMovie &&
+      currentParticipantMemory &&
+      !isMemoryOpen &&
+      !isMemoryClosing &&
+      !isMemoryTicketOpen &&
+      !shouldOpenMemoryTicket,
+  );
+
+  useEffect(() => {
+    if (!activity || activity.archivedAt) return;
+    if (!isActivityMemoryComplete(activity.memories, memoryParticipantScope)) {
+      return;
+    }
+
+    const archiveTime = new Date().toISOString();
+    const nextActivity =
+      updateActivity(activityId, {
+        archivedAt: archiveTime,
+      }) ?? activity;
+    updateRemoteActivity(activityId, { archivedAt: archiveTime }).catch(
+      () => {},
+    );
+
+    window.sessionStorage.setItem(
+      `letsmovie.activity-archive-exit.${activityId}`,
+      "pending",
+    );
+    setActivity(nextActivity);
+  }, [activity, activityId, currentParticipantMemory, memoryParticipantScope]);
 
   const closeStartConfirmation = () => {
     if (isStartConfirmationClosing) return;
@@ -755,8 +1025,11 @@ export function CollectingPage({
     setParticipantError("");
 
     if (!file) {
+      setIsParticipantAvatarEditorOpen(false);
+      setIsParticipantAvatarEditorClosing(false);
       setParticipantAvatarFile(null);
       setParticipantAvatarPreview("");
+      setParticipantAvatarDimensions(null);
       return;
     }
 
@@ -769,23 +1042,25 @@ export function CollectingPage({
       return;
     }
 
-    if (file.size > 2 * 1024 * 1024) {
-      setParticipantError("头像不能超过 2MB");
-      event.target.value = "";
-      return;
-    }
-
     setParticipantAvatarFile(file);
+    setParticipantAvatarDimensions(null);
     setParticipantAvatarPreview(URL.createObjectURL(file));
     avatarCropPointersRef.current.clear();
     avatarCropGestureRef.current = null;
     updateParticipantAvatarCrop({ x: 0, y: 0, zoom: 1 });
+    setIsParticipantAvatarEditorClosing(false);
+    setIsParticipantAvatarEditorOpen(true);
   };
 
   const enterActivity = async () => {
     const nickname = participantName.trim();
     if (!nickname) {
       setParticipantError("先告诉大家怎么称呼你");
+      return;
+    }
+
+    if (!participantAvatarFile) {
+      setParticipantError("请上传头像");
       return;
     }
 
@@ -817,16 +1092,25 @@ export function CollectingPage({
         }
       }
 
-      if (!avatarUrl) {
-        avatarUrl =
-          defaultAvatarPool[
-            Math.floor(Math.random() * defaultAvatarPool.length)
-          ];
-      }
-
       const nextParticipant = { participantId, nickname, avatarUrl };
       saveParticipant(activityId, nextParticipant);
       setParticipant(nextParticipant);
+      setActivity((currentActivity) =>
+        currentActivity
+          ? updateActivity(activityId, {
+              participants: mergeActivityParticipants(
+                currentActivity.participants,
+                [
+                  {
+                    ...nextParticipant,
+                    role: "member",
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+              ),
+            }) ?? currentActivity
+          : currentActivity,
+      );
       try {
         const remoteParticipant = await upsertRemoteParticipant({
           activityId,
@@ -840,6 +1124,18 @@ export function CollectingPage({
           ),
           remoteParticipant ?? { ...nextParticipant, role: "member" },
         ]);
+        if (remoteParticipant) {
+          setActivity((currentActivity) =>
+            currentActivity
+              ? updateActivity(activityId, {
+                  participants: mergeActivityParticipants(
+                    currentActivity.participants,
+                    [remoteParticipant],
+                  ),
+                }) ?? currentActivity
+              : currentActivity,
+          );
+        }
       } catch {
         setRemoteParticipants((participants) => [
           ...participants.filter(
@@ -1021,25 +1317,51 @@ export function CollectingPage({
       participantAvatar: participant.avatarUrl,
       content: memoryNote.trim(),
     };
-    const savedMemory =
-      (await createMemory(normalizedUserMemory).catch(() => null)) ??
-      normalizedUserMemory;
-    setActivity(
+    let savedMemory = normalizedUserMemory;
+    try {
+      savedMemory = (await createMemory(normalizedUserMemory)) ?? savedMemory;
+    } catch {
+      if (isSupabaseConfigured) {
+        setIsCopyToastClosing(false);
+        setCopyToastMessage("回忆同步失败，请先更新远端 memories 表");
+        return;
+      }
+    }
+    const remoteMemoriesAfterSave = await fetchActivityMemories(activityId).catch(
+      () => [],
+    );
+    const nextMemories = mergeParticipantMemory(
+      [...(activity.memories ?? []), ...remoteMemoriesAfterSave],
+      savedMemory,
+    );
+    const shouldArchive = isActivityMemoryComplete(
+      nextMemories,
+      memoryParticipantScope,
+    );
+    const archiveTime = shouldArchive
+      ? activity.archivedAt ?? new Date().toISOString()
+      : activity.archivedAt;
+    const nextActivity =
       updateActivity(activityId, {
         memoryEmoji: selectedMemoryMood,
         memoryNote: memoryNote.trim(),
         memoryCreatedAt,
         memoryTicketNumber,
-        memories: [
-          ...(activity.memories ?? []).filter(
-            (memory) =>
-              (memory.participantId ?? memory.memberId) !==
-              normalizedUserMemory.participantId,
-          ),
-          savedMemory,
-        ],
-      }),
-    );
+        memories: nextMemories,
+        archivedAt: archiveTime,
+      }) ?? activity;
+
+    if (shouldArchive) {
+      updateRemoteActivity(activityId, { archivedAt: archiveTime }).catch(
+        () => {},
+      );
+      window.sessionStorage.setItem(
+        `letsmovie.activity-archive-exit.${activityId}`,
+        "pending",
+      );
+    }
+
+    setActivity(nextActivity);
     setShouldOpenMemoryTicket(true);
     setIsMemoryClosing(true);
   };
@@ -1050,19 +1372,14 @@ export function CollectingPage({
     setIsMemoryClosing(true);
   };
 
-  const archiveMemory = () => {
-    if (!activity) return;
-
-    updateActivity(activityId, {
-      memoryEmoji: selectedMemoryMood,
-      memoryNote: memoryNote.trim(),
-      archivedAt: new Date().toISOString(),
-    });
-    window.sessionStorage.setItem(
-      `letsmovie.activity-archive-exit.${activityId}`,
-      "pending",
-    );
+  const closeMemoryTicket = () => {
+    setIsMemoryTicketOpen(false);
     window.location.hash = "#/";
+  };
+
+  const closeParticipantAvatarEditor = () => {
+    if (isParticipantAvatarEditorClosing) return;
+    setIsParticipantAvatarEditorClosing(true);
   };
 
   const leaveActivity = (remove = false) => {
@@ -1110,13 +1427,123 @@ export function CollectingPage({
     );
   }
 
+  if (
+    shouldShowCurrentParticipantTicket &&
+    currentParticipantMemory &&
+    revealedMovie &&
+    activity
+  ) {
+    return (
+      <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
+        <div className="phone-canvas bg-[#090a0c] shadow-[0_0_50px_rgba(0,0,0,0.32)]">
+          <MemoryTicketPreview
+            activity={activity}
+            movie={revealedMovie}
+            memory={currentParticipantMemory}
+            onClose={closeMemoryTicket}
+            className="z-[100]"
+          />
+        </div>
+      </main>
+    );
+  }
+
+  const renderParticipantAvatarEditor = () => {
+    if (!isParticipantAvatarEditorOpen || !participantAvatarPreview) {
+      return null;
+    }
+
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑头像"
+        onAnimationEnd={(event) => {
+          if (
+            !isParticipantAvatarEditorClosing ||
+            event.target !== event.currentTarget
+          ) {
+            return;
+          }
+
+          setIsParticipantAvatarEditorOpen(false);
+          setIsParticipantAvatarEditorClosing(false);
+        }}
+        className={`phone-fixed z-[190] flex flex-col bg-[#090a0c] text-[#f8f4ed] ${
+          isParticipantAvatarEditorClosing
+            ? "avatar-editor-exit"
+            : "avatar-editor-enter"
+        }`}
+      >
+        <header className="grid h-16 shrink-0 grid-cols-[40px_1fr_40px] items-center border-b border-[#f8f4ed]/8 bg-[#131416]/96 px-5 shadow-[0_12px_30px_rgba(0,0,0,0.28)] backdrop-blur-md">
+          <button
+            type="button"
+            aria-label="取消头像裁切"
+            onClick={closeParticipantAvatarEditor}
+            className="grid size-10 place-items-center text-[#f8f4ed]/72 transition hover:text-[#f8f4ed] active:scale-95"
+          >
+            <X className="size-5" strokeWidth={1.8} />
+          </button>
+          <h2 className="text-center text-[17px] font-medium leading-none text-[#f8f4ed]">
+            编辑头像
+          </h2>
+          <button
+            type="button"
+            aria-label="确认头像裁切"
+            onClick={closeParticipantAvatarEditor}
+            className="grid size-10 place-items-center text-[#a52e4e] transition active:scale-95"
+          >
+            <Check className="size-5" strokeWidth={1.9} />
+          </button>
+        </header>
+
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-[#090a0c] px-5">
+          <div
+            role="img"
+            aria-label="头像裁切框"
+            onPointerDown={handleAvatarCropPointerDown}
+            onPointerMove={handleAvatarCropPointerMove}
+            onPointerUp={handleAvatarCropPointerEnd}
+            onPointerCancel={handleAvatarCropPointerEnd}
+            onWheel={handleAvatarCropWheel}
+            className="relative aspect-square w-full max-w-[340px] touch-none select-none overflow-hidden rounded-[24px] border border-[#f8f4ed]/10 bg-[#131416] shadow-[0_24px_70px_rgba(0,0,0,0.42)]"
+          >
+            <img
+              src={participantAvatarPreview}
+              alt=""
+              draggable={false}
+              onLoad={(event) =>
+                handleParticipantAvatarImageLoad({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })
+              }
+              className="pointer-events-none absolute max-w-none object-cover"
+              style={getAvatarCropImageStyle(
+                participantAvatarCrop,
+                participantAvatarDimensions,
+              )}
+            />
+            <div className="pointer-events-none absolute inset-0 rounded-full border border-[#f8f4ed]/85 shadow-[0_0_0_999px_rgba(9,10,12,0.48)]">
+              <div className="absolute left-1/3 top-0 h-full w-px bg-[#f8f4ed]/22" />
+              <div className="absolute left-2/3 top-0 h-full w-px bg-[#f8f4ed]/22" />
+              <div className="absolute left-0 top-1/3 h-px w-full bg-[#f8f4ed]/22" />
+              <div className="absolute left-0 top-2/3 h-px w-full bg-[#f8f4ed]/22" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <main className="phone-stage bg-[#090a0c] text-[#f8f4ed]">
       <div
         className={`phone-canvas activity-detail-canvas bg-[#131416] shadow-[0_0_50px_rgba(0,0,0,0.32)] ${
           isPageClosing ? "activity-detail-exit" : ""
-        }`}
+        } ${isMemoryTicketOpen ? "activity-detail-canvas-locked" : ""}`}
       >
+        {renderParticipantAvatarEditor()}
         {!participant && (
           <div className="phone-fixed z-[120] grid place-items-center bg-black/68 px-6 backdrop-blur-[4px]">
             <section
@@ -1133,26 +1560,37 @@ export function CollectingPage({
                 {participantAvatarPreview ? (
                   <div className="relative">
                     <div
-                      role="img"
-                      aria-label="头像裁剪预览"
-                      onPointerDown={handleAvatarCropPointerDown}
-                      onPointerMove={handleAvatarCropPointerMove}
-                      onPointerUp={handleAvatarCropPointerEnd}
-                      onPointerCancel={handleAvatarCropPointerEnd}
-                      onWheel={handleAvatarCropWheel}
-                      className="relative grid aspect-square size-28 touch-none select-none place-items-center overflow-hidden rounded-full border border-[#f8f4ed]/14 bg-[#1c1f24] shadow-[0_16px_40px_rgba(0,0,0,0.32)]"
+                      role="button"
+                      tabIndex={0}
+                      aria-label="重新编辑头像"
+                      onClick={() => {
+                        setIsParticipantAvatarEditorClosing(false);
+                        setIsParticipantAvatarEditorOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setIsParticipantAvatarEditorClosing(false);
+                          setIsParticipantAvatarEditorOpen(true);
+                        }
+                      }}
+                      className="relative grid aspect-square size-28 cursor-pointer select-none place-items-center overflow-hidden rounded-full border border-[#f8f4ed]/14 bg-[#1c1f24] shadow-[0_16px_40px_rgba(0,0,0,0.32)] transition active:scale-95"
                     >
                       <img
                         src={participantAvatarPreview}
                         alt=""
                         draggable={false}
-                        className="pointer-events-none aspect-square size-full rounded-full object-cover"
-                        style={{
-                          objectPosition: `${
-                            50 + participantAvatarCrop.x / 2
-                          }% ${50 + participantAvatarCrop.y / 2}%`,
-                          transform: `scale(${participantAvatarCrop.zoom})`,
-                        }}
+                        onLoad={(event) =>
+                          handleParticipantAvatarImageLoad({
+                            width: event.currentTarget.naturalWidth,
+                            height: event.currentTarget.naturalHeight,
+                          })
+                        }
+                        className="pointer-events-none absolute max-w-none object-cover"
+                        style={getAvatarCropImageStyle(
+                          participantAvatarCrop,
+                          participantAvatarDimensions,
+                        )}
                       />
                       <div className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-inset ring-white/20" />
                     </div>
@@ -1185,7 +1623,7 @@ export function CollectingPage({
                   className="sr-only"
                 />
                 <p className="mt-2 text-[12px] text-[#f8f4ed]/35">
-                  可选，jpg / png / webp，2MB 内
+                  jpg / png / webp
                 </p>
               </div>
 
@@ -1292,7 +1730,9 @@ export function CollectingPage({
               ? { paddingBottom: recommendationPanelHeight + 24 }
               : undefined
           }
-          className="relative z-20 -mt-7 min-h-[620px] rounded-t-[32px] border-t border-white/[0.08] bg-[#181a1e] px-5 pb-40 pt-7 shadow-[0_-24px_55px_rgba(0,0,0,0.34)] transition-[padding-bottom] duration-200"
+          className={`relative z-20 -mt-7 rounded-t-[32px] border-t border-white/[0.08] bg-[#181a1e] px-5 pt-7 shadow-[0_-24px_55px_rgba(0,0,0,0.34)] transition-[padding-bottom] duration-200 ${
+            isMovieSelected ? "min-h-[529px] pb-8" : "min-h-[620px] pb-40"
+          }`}
         >
           <div className="flex w-full items-start justify-between px-1">
             <div className="flex flex-col items-start">
@@ -1439,7 +1879,13 @@ export function CollectingPage({
           )}
         </section>
 
-        <div className="absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-[#131416] via-[#131416]/96 to-transparent px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-9">
+        <div
+          className={`absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-[#131416] via-[#131416]/96 to-transparent px-4 pt-9 ${
+            isMovieSelected
+              ? "pb-[36px]"
+              : "pb-[max(14px,env(safe-area-inset-bottom))]"
+          }`}
+        >
           {isMovieSelected ? (
             <button
               type="button"
@@ -1967,7 +2413,7 @@ export function CollectingPage({
                 setSelectedMemoryMood("");
                 setMemoryNote("");
               }}
-              className={`absolute inset-x-0 bottom-0 flex h-full flex-col rounded-t-[24px] bg-[#23262d] px-5 pb-[max(28px,env(safe-area-inset-bottom))] pt-[190px] shadow-[0_-24px_60px_rgba(0,0,0,0.45)] ${
+              className={`absolute inset-x-0 bottom-0 flex h-full flex-col rounded-t-[24px] bg-[#23262d] px-5 pb-[max(28px,env(safe-area-inset-bottom))] pt-[124px] shadow-[0_-24px_60px_rgba(0,0,0,0.45)] ${
                 isMemoryClosing ? "memory-sheet-out" : "memory-sheet"
               }`}
             >
@@ -1984,7 +2430,7 @@ export function CollectingPage({
                 今晚怎么样？
               </h2>
 
-              <div className="mt-12 grid grid-cols-7 gap-2">
+              <div className="mt-10 grid grid-cols-7 gap-2">
                 {memoryMoods.map((mood) => {
                   const isSelected = selectedMemoryMood === mood;
 
@@ -2010,7 +2456,7 @@ export function CollectingPage({
               {selectedMemoryMood && (
                 <div
                   key={selectedMemoryMood}
-                  className="memory-details-enter mt-16 flex min-h-0 flex-1 flex-col"
+                  className="memory-details-enter mt-10 flex min-h-0 flex-col"
                 >
                   <label
                     htmlFor="memory-note"
@@ -2028,7 +2474,7 @@ export function CollectingPage({
                   <button
                     type="button"
                     onClick={confirmMemory}
-                    className="mt-auto flex h-14 w-full items-center justify-center rounded-[16px] bg-[#a52e4e] text-[16px] font-medium text-[#f8f4ed] shadow-[0_10px_30px_rgba(165,46,78,0.24)] transition active:scale-[0.985]"
+                    className="mt-10 flex h-14 w-full items-center justify-center rounded-[16px] bg-[#a52e4e] text-[16px] font-medium text-[#f8f4ed] shadow-[0_10px_30px_rgba(165,46,78,0.24)] transition active:scale-[0.985]"
                   >
                     记住今晚
                   </button>
@@ -2042,11 +2488,11 @@ export function CollectingPage({
           <button
             type="button"
             aria-label="收起今晚票根并返回我的活动"
-            onClick={archiveMemory}
+            onClick={closeMemoryTicket}
             className="memory-ticket-overlay phone-fixed z-[100] block bg-[#090a0c] text-left"
           >
             <article className="memory-ticket flex h-full w-full flex-col overflow-hidden bg-[#23262d]">
-              <div className="relative h-[528px] overflow-hidden">
+              <div className="relative h-[590px] overflow-hidden">
                 <img
                   src={revealedMovie.src}
                   alt={revealedMovie.title}

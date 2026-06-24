@@ -7,15 +7,19 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { createActivity } from "@/lib/activity-store";
+import { createActivity, saveActivity } from "@/lib/activity-store";
 import {
   saveMovies,
   searchMovies,
   type Movie,
 } from "@/lib/movie-database";
-import { createParticipantId, saveParticipant } from "@/lib/participant-store";
+import {
+  getParticipant,
+  saveParticipant,
+  type Participant,
+} from "@/lib/participant-store";
 import { createRemoteActivityBundle } from "@/lib/supabase-activity";
-import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
+import { UserProfileDialog } from "@/components/user-profile-dialog";
 
 const titleLimit = 30;
 const noteLimit = 100;
@@ -160,6 +164,8 @@ export function CreateActivityPage() {
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
   const [isTimePickerClosing, setIsTimePickerClosing] = useState(false);
   const [isCreatingActivity, setIsCreatingActivity] = useState(false);
+  const [currentParticipant, setCurrentParticipant] =
+    useState<Participant | null>(() => getParticipant());
   const [initialYear, initialMonth, initialDay] = date.split(".");
   const [draftYear, setDraftYear] = useState(initialYear);
   const [draftMonth, setDraftMonth] = useState(initialMonth);
@@ -258,14 +264,22 @@ export function CreateActivityPage() {
         return movies.filter((selectedMovie) => selectedMovie.id !== movie.id);
       }
 
-      const movieWithCurrentUser = { ...movie, recommender: currentUserName };
+      const movieWithCurrentUser = {
+        ...movie,
+        recommender: currentParticipant?.nickname ?? currentUserName,
+      };
       if (selectionMode === "confirmed") return [movieWithCurrentUser];
       return [...movies, movieWithCurrentUser];
     });
   };
 
   const submitActivity = async () => {
-    if (!isDetailsComplete || !selectionMode || selectedMovies.length === 0) {
+    if (
+      !isDetailsComplete ||
+      !selectionMode ||
+      selectedMovies.length === 0 ||
+      !currentParticipant
+    ) {
       return;
     }
 
@@ -282,12 +296,18 @@ export function CreateActivityPage() {
       selectedMovieId:
         selectionMode === "confirmed" ? selectedMovies[0].id : undefined,
     });
-    const hostParticipant = {
-      participantId: createParticipantId(),
-      nickname: "小杨",
-      avatarUrl: hostImage,
-    };
+    const hostParticipant = currentParticipant;
     saveParticipant(activity.id, hostParticipant);
+    saveActivity({
+      ...activity,
+      participants: [
+        {
+          ...hostParticipant,
+          role: "host",
+          createdAt: activity.createdAt,
+        },
+      ],
+    });
 
     try {
       await createRemoteActivityBundle({
@@ -696,6 +716,12 @@ export function CreateActivityPage() {
               </button>
             </section>
           </div>
+        )}
+        {!currentParticipant && (
+          <UserProfileDialog
+            required
+            onSave={(participant) => setCurrentParticipant(participant)}
+          />
         )}
       </section>
     </main>

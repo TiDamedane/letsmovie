@@ -24,6 +24,7 @@ type ActivityRow = {
   minute: string | null;
   status: ActivityStatus;
   selected_movie_id: string | null;
+  archived_at?: string | null;
   created_at: string;
 };
 
@@ -73,6 +74,7 @@ function toActivity(row: ActivityRow, movies: Movie[]): Activity {
     status: row.status,
     candidateMovieIds: movies.map((movie) => movie.id),
     selectedMovieId: row.selected_movie_id ?? undefined,
+    archivedAt: row.archived_at ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -171,7 +173,7 @@ export async function upsertRemoteActivity(activity: Activity) {
 
 export async function updateRemoteActivity(
   activityId: string,
-  updates: Partial<Pick<Activity, "status" | "selectedMovieId">>,
+  updates: Partial<Pick<Activity, "status" | "selectedMovieId" | "archivedAt">>,
 ) {
   if (!isActivitySyncConfigured || !supabaseUrl) return null;
 
@@ -179,6 +181,9 @@ export async function updateRemoteActivity(
   if (updates.status) body.status = updates.status;
   if ("selectedMovieId" in updates) {
     body.selected_movie_id = updates.selectedMovieId ?? null;
+  }
+  if ("archivedAt" in updates) {
+    body.archived_at = updates.archivedAt ?? null;
   }
 
   const response = await fetch(

@@ -8,6 +8,7 @@ create table if not exists public.activities (
   minute text,
   status text not null check (status in ('collecting', 'picking', 'selected')),
   selected_movie_id text,
+  archived_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -33,9 +34,28 @@ create table if not exists public.activity_movies (
   primary key (activity_id, movie_id)
 );
 
+create table if not exists public.memories (
+  id uuid primary key default gen_random_uuid(),
+  activity_id text not null references public.activities(id) on delete cascade,
+  participant_id text not null,
+  participant_name text not null,
+  participant_avatar text,
+  emoji text not null,
+  content text,
+  created_at timestamptz not null default now(),
+  unique (activity_id, participant_id)
+);
+
+create unique index if not exists memories_activity_participant_unique
+  on public.memories (activity_id, participant_id);
+
+alter table public.activities
+  add column if not exists archived_at timestamptz;
+
 alter table public.activities enable row level security;
 alter table public.activity_participants enable row level security;
 alter table public.activity_movies enable row level security;
+alter table public.memories enable row level security;
 
 drop policy if exists "public activities read" on public.activities;
 drop policy if exists "public activities write" on public.activities;
@@ -47,6 +67,9 @@ drop policy if exists "public movies read" on public.activity_movies;
 drop policy if exists "public movies write" on public.activity_movies;
 drop policy if exists "public movies update" on public.activity_movies;
 drop policy if exists "public movies delete" on public.activity_movies;
+drop policy if exists "public memories read" on public.memories;
+drop policy if exists "public memories write" on public.memories;
+drop policy if exists "public memories update" on public.memories;
 
 create policy "public activities read"
   on public.activities for select
@@ -90,3 +113,16 @@ create policy "public movies update"
 create policy "public movies delete"
   on public.activity_movies for delete
   using (true);
+
+create policy "public memories read"
+  on public.memories for select
+  using (true);
+
+create policy "public memories write"
+  on public.memories for insert
+  with check (true);
+
+create policy "public memories update"
+  on public.memories for update
+  using (true)
+  with check (true);

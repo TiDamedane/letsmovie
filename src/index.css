@@ -62,7 +62,24 @@ body {
   scrollbar-width: none;
 }
 
+.activity-detail-canvas-locked {
+  overflow: hidden;
+}
+
 .activity-detail-canvas::-webkit-scrollbar {
+  display: none;
+}
+
+.home-page-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.home-page-scroll::-webkit-scrollbar {
   display: none;
 }
 
@@ -178,6 +195,15 @@ a {
 }
 
 .memory-ticket.memory-ticket-exit {
+  animation: detail-page-exit 420ms cubic-bezier(0.7, 0, 0.84, 0) both;
+}
+
+.avatar-editor-enter {
+  animation: memory-ticket-in 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.avatar-editor-exit {
+  pointer-events: none;
   animation: detail-page-exit 420ms cubic-bezier(0.7, 0, 0.84, 0) both;
 }
 

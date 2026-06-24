@@ -14,6 +14,14 @@ export type ActivityMemory = {
   createdAt: string;
 };
 
+export type ActivityParticipantSnapshot = {
+  participantId: string;
+  nickname: string;
+  avatarUrl: string;
+  role: "host" | "member";
+  createdAt?: string;
+};
+
 export type Activity = {
   id: string;
   title: string;
@@ -30,6 +38,7 @@ export type Activity = {
   memoryCreatedAt?: string;
   memoryTicketNumber?: number;
   memories?: ActivityMemory[];
+  participants?: ActivityParticipantSnapshot[];
   archivedAt?: string;
   createdAt: string;
 };

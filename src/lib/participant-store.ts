@@ -4,14 +4,13 @@ export type Participant = {
   avatarUrl: string;
 };
 
+const userProfileStorageKey = "frameclub_user_profile.v1";
+
 export const participantStorageKey = (activityId: string) =>
   `frameclub_participant_${activityId}`;
 
-export function getParticipant(activityId: string): Participant | null {
+function parseParticipant(storedValue: string | null): Participant | null {
   try {
-    const storedValue = window.localStorage.getItem(
-      participantStorageKey(activityId),
-    );
     if (!storedValue) return null;
 
     const participant = JSON.parse(storedValue) as Partial<Participant>;
@@ -27,13 +26,47 @@ export function getParticipant(activityId: string): Participant | null {
   }
 }
 
+export function getParticipant(activityId?: string): Participant | null {
+  const userProfile = parseParticipant(
+    window.localStorage.getItem(userProfileStorageKey),
+  );
+  if (userProfile) return userProfile;
+
+  if (!activityId) return null;
+
+  const legacyParticipant = parseParticipant(
+    window.localStorage.getItem(participantStorageKey(activityId)),
+  );
+  if (legacyParticipant) saveParticipant(legacyParticipant);
+  return legacyParticipant;
+}
+
+export function saveParticipant(participant: Participant): void;
 export function saveParticipant(
   activityId: string,
   participant: Participant,
+): void;
+export function saveParticipant(
+  activityIdOrParticipant: string | Participant,
+  maybeParticipant?: Participant,
 ) {
-  window.localStorage.setItem(
-    participantStorageKey(activityId),
-    JSON.stringify(participant),
+  const participant =
+    typeof activityIdOrParticipant === "string"
+      ? maybeParticipant
+      : activityIdOrParticipant;
+  if (!participant) return;
+
+  window.localStorage.setItem(userProfileStorageKey, JSON.stringify(participant));
+
+  if (typeof activityIdOrParticipant === "string") {
+    window.localStorage.setItem(
+      participantStorageKey(activityIdOrParticipant),
+      JSON.stringify(participant),
+    );
+  }
+
+  window.dispatchEvent(
+    new CustomEvent("frameclub:user-profile-updated", { detail: participant }),
   );
 }
 

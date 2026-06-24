@@ -7,6 +7,11 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
+async function getResponseErrorMessage(response: Response, action: string) {
+  const message = await response.text().catch(() => "");
+  return `${action} failed (${response.status})${message ? `: ${message}` : ""}`;
+}
+
 type MemoryRow = {
   id?: string;
   activity_id: string;
@@ -97,7 +102,9 @@ export async function fetchActivityMemories(activityId: string) {
   )}&select=*&order=created_at.asc`;
   const response = await fetch(url, { headers: headers() });
 
-  if (!response.ok) throw new Error("Memories fetch failed");
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(response, "Memories fetch"));
+  }
   const rows = (await response.json()) as MemoryRow[];
   return rows.map(toMemory);
 }
@@ -105,16 +112,21 @@ export async function fetchActivityMemories(activityId: string) {
 export async function createMemory(memory: ActivityMemory) {
   if (!isSupabaseConfigured || !supabaseUrl) return null;
 
-  const response = await fetch(`${supabaseUrl}/rest/v1/memories`, {
-    method: "POST",
-    headers: {
-      ...headers(),
-      Prefer: "return=representation",
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/memories?on_conflict=activity_id,participant_id`,
+    {
+      method: "POST",
+      headers: {
+        ...headers(),
+        Prefer: "resolution=merge-duplicates,return=representation",
+      },
+      body: JSON.stringify(toRow(memory)),
     },
-    body: JSON.stringify(toRow(memory)),
-  });
+  );
 
-  if (!response.ok) throw new Error("Memory insert failed");
+  if (!response.ok) {
+    throw new Error(await getResponseErrorMessage(response, "Memory insert"));
+  }
   const [row] = (await response.json()) as MemoryRow[];
   return row ? toMemory(row) : memory;
 }

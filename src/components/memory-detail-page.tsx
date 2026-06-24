@@ -8,8 +8,14 @@ import {
   getActivity,
   updateActivity,
   type ActivityMemory,
+  type ActivityParticipantSnapshot,
 } from "@/lib/activity-store";
-import { getMovieById } from "@/lib/movie-database";
+import { getMovieById, saveMovies } from "@/lib/movie-database";
+import {
+  getMemoryParticipantId,
+  mergeActivityParticipants,
+} from "@/lib/memory-progress";
+import { fetchRemoteActivityBundle } from "@/lib/supabase-activity";
 import { fetchActivityMemories } from "@/lib/supabase-memory";
 
 function formatMemoryDate(date: string) {
@@ -47,16 +53,46 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
     ];
   }, [activity]);
 
+  const memoryByParticipantId = useMemo(() => {
+    const memoryMap = new Map<string, ActivityMemory>();
+
+    memories.forEach((memory) => {
+      const participantId = getMemoryParticipantId(memory);
+      if (!participantId) return;
+      memoryMap.set(participantId, memory);
+    });
+
+    return memoryMap;
+  }, [memories]);
+
   useEffect(() => {
     let isActive = true;
 
-    fetchActivityMemories(activityId)
-      .then((remoteMemories) => {
-        if (!isActive || remoteMemories.length === 0) return;
-        const nextActivity = updateActivity(activityId, {
-          memories: remoteMemories,
+    Promise.all([
+      fetchRemoteActivityBundle(activityId).catch(() => null),
+      fetchActivityMemories(activityId).catch(() => []),
+    ])
+      .then(([bundle, remoteMemories]) => {
+        if (!isActive) return;
+        if (bundle) saveMovies(bundle.movies);
+
+        setActivity((currentActivity) => {
+          const storedActivity = currentActivity ?? getActivity(activityId);
+          const nextActivity = updateActivity(activityId, {
+            memories:
+              remoteMemories.length > 0
+                ? remoteMemories
+                : storedActivity?.memories,
+            participants: bundle
+              ? mergeActivityParticipants(
+                  storedActivity?.participants,
+                  bundle.participants,
+                )
+              : storedActivity?.participants,
+          });
+
+          return nextActivity ?? currentActivity;
         });
-        setActivity((currentActivity) => nextActivity ?? currentActivity);
       })
       .catch(() => {
         // Local memories are still available for offline/dev mode.
@@ -67,20 +103,57 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
     };
   }, [activityId]);
 
-  useEffect(() => {
-    if (selectedMemberId || memories.length === 0) return;
-    setSelectedMemberId(memories[0].participantId ?? memories[0].memberId ?? "");
-  }, [memories, selectedMemberId]);
+  const orderedParticipants = useMemo<ActivityParticipantSnapshot[]>(() => {
+    if (activity?.participants?.length) {
+      return [...activity.participants].sort((left, right) =>
+        (left.createdAt ?? "").localeCompare(right.createdAt ?? ""),
+      );
+    }
 
-  const memoryParticipants = memories.map((memory) => ({
-    id: memory.participantId ?? memory.memberId ?? "",
-    name: memory.participantName ?? memory.memberName ?? "",
-    src: memory.participantAvatar,
-  }));
+    return memories.map((memory) => ({
+      participantId: getMemoryParticipantId(memory),
+      nickname: memory.participantName ?? memory.memberName ?? "",
+      avatarUrl: memory.participantAvatar,
+      role: "member",
+      createdAt: memory.createdAt,
+    }));
+  }, [activity?.participants, memories]);
 
-  const selectedMemory = memories.find(
-    (memory) => (memory.participantId ?? memory.memberId) === selectedMemberId,
+  const memoryParticipants = useMemo(
+    () =>
+      orderedParticipants
+        .map((participant) => {
+          const memory = memoryByParticipantId.get(participant.participantId);
+          if (!memory) return null;
+
+          return {
+            id: participant.participantId,
+            name:
+              participant.nickname ||
+              memory.participantName ||
+              memory.memberName ||
+              "",
+            src: participant.avatarUrl || memory.participantAvatar,
+          };
+        })
+        .filter(
+          (participant): participant is { id: string; name: string; src: string } =>
+            Boolean(participant?.id),
+        ),
+    [memoryByParticipantId, orderedParticipants],
   );
+
+  useEffect(() => {
+    const firstParticipantId = memoryParticipants[0]?.id ?? "";
+    if (!firstParticipantId) return;
+    const hasSelectedParticipant = memoryParticipants.some(
+      (participant) => participant.id === selectedMemberId,
+    );
+    if (hasSelectedParticipant) return;
+    setSelectedMemberId(firstParticipantId);
+  }, [memoryParticipants, selectedMemberId]);
+
+  const selectedMemory = memoryByParticipantId.get(selectedMemberId);
   const selectedMovie = activity?.selectedMovieId
     ? getMovieById(activity.selectedMovieId)
     : undefined;
@@ -160,7 +233,7 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
               <span>{formatMemoryDate(activity.date)}</span>
             </div>
 
-            <div className="mt-7 flex flex-wrap items-center justify-between gap-x-4 gap-y-4">
+            <div className="mt-7 flex items-center justify-start gap-3">
               {memoryParticipants.map((participant) => {
                 const isSelected = selectedMemberId === participant.id;
                 return (
@@ -170,10 +243,10 @@ export function MemoryDetailPage({ activityId }: { activityId: string }) {
                     aria-label={`查看${participant.name}的回忆`}
                     aria-pressed={isSelected}
                     onClick={() => setSelectedMemberId(participant.id)}
-                    className={`rounded-full border-2 p-0.5 transition duration-200 active:scale-95 ${
+                    className={`grid size-10 shrink-0 place-items-center rounded-full transition duration-200 active:scale-95 ${
                       isSelected
-                        ? "border-[#a52e4e]"
-                        : "border-transparent"
+                        ? "ring-2 ring-[#a52e4e] ring-offset-2 ring-offset-[#23262d]"
+                        : ""
                     }`}
                   >
                     {participant.src ? (

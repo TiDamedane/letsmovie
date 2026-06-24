@@ -1,14 +1,18 @@
 import { CalendarDays } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import type { Activity } from "@/lib/activity-store";
+import type { Activity, ActivityParticipantSnapshot } from "@/lib/activity-store";
 import { getMovieById } from "@/lib/movie-database";
 import hostImage from "../../picture/user/IMG_20260611_210240.jpg";
-
-const members: string[] = [];
 
 function formatActivityDate(activity: Activity) {
   const [year, month, day] = activity.date.split(".");
   return `${year}年${Number(month)}月${Number(day)}日`;
+}
+
+function sortParticipants(participants: ActivityParticipantSnapshot[] = []) {
+  return [...participants].sort((left, right) =>
+    (left.createdAt ?? "").localeCompare(right.createdAt ?? ""),
+  );
 }
 
 export function ActivityCard({
@@ -17,16 +21,41 @@ export function ActivityCard({
   archiveExit = false,
   href,
   showStatus = true,
+  statusLabel,
+  statusTone = "default",
 }: {
   activity: Activity;
   animatePoster?: boolean;
   archiveExit?: boolean;
   href?: string;
   showStatus?: boolean;
+  statusLabel?: string;
+  statusTone?: "default" | "waiting";
 }) {
   const selectedMovie = activity.selectedMovieId
     ? getMovieById(activity.selectedMovieId)
     : undefined;
+  const displayStatusLabel =
+    statusLabel ??
+    (activity.status === "selected"
+      ? "影片已选定"
+      : activity.status === "picking"
+        ? "影片挑选中"
+        : "影片收集中");
+  const statusDotClass =
+    statusTone === "waiting"
+      ? "bg-[#d97706]"
+      : activity.status === "selected"
+        ? "bg-[#4fa86a]"
+        : "bg-[#d97706]";
+  const sortedParticipants = sortParticipants(activity.participants);
+  const hostParticipant = sortedParticipants.find(
+    (participant) => participant.role === "host",
+  );
+  const memberParticipants = sortedParticipants.filter(
+    (participant) => participant.role === "member",
+  );
+  const visibleMembers = memberParticipants.slice(0, 4);
 
   return (
     <a
@@ -63,17 +92,9 @@ export function ActivityCard({
                 }`}
               >
                 <span
-                  className={`size-[7px] rounded-full ${
-                    activity.status === "selected"
-                      ? "bg-[#4fa86a]"
-                      : "bg-[#d97706]"
-                  }`}
+                  className={`size-[7px] rounded-full ${statusDotClass}`}
                 />
-                {activity.status === "selected"
-                  ? "影片已选定"
-                  : activity.status === "picking"
-                    ? "影片挑选中"
-                    : "影片收集中"}
+                {displayStatusLabel}
               </div>
               <h1 className="max-w-[230px] text-[28px] font-medium leading-[1.08] tracking-[-0.045em] text-[#f8f4ed] [text-shadow:0_2px_12px_rgb(0_0_0/0.35)]">
                 {activity.title}
@@ -87,31 +108,34 @@ export function ActivityCard({
             </div>
           </div>
 
-          <div className="mt-auto flex items-end justify-between gap-5">
-            <div className="flex flex-col items-start">
-              <img
-                src={hostImage}
-                alt="活动主持人"
-                className="size-9 rounded-full object-cover shadow-sm"
-              />
-            </div>
+          <div className="mt-auto flex items-center justify-between gap-5">
+            <img
+              src={hostParticipant?.avatarUrl || hostImage}
+              alt={hostParticipant?.nickname || "活动主持人"}
+              className="size-10 rounded-full object-cover shadow-sm"
+            />
 
-            <div className="flex flex-col items-end">
-              <div className="flex -space-x-2.5">
-                {members.map((member, index) => (
+            <div className="flex min-w-10 items-center justify-end gap-3">
+              {visibleMembers.map((member, index) =>
+                member.avatarUrl ? (
                   <img
-                    key={member}
-                    src={member}
-                    alt={`参与成员 ${index + 1}`}
-                    className="size-8 rounded-full object-cover shadow-sm"
+                    key={member.participantId}
+                    src={member.avatarUrl}
+                    alt={member.nickname || `参与成员 ${index + 1}`}
+                    className="size-10 rounded-full object-cover shadow-sm"
                   />
-                ))}
-                {members.length > 4 && (
-                  <div className="grid size-8 place-items-center rounded-full bg-[#25272c] text-[9px] font-medium text-[#f8f4ed] shadow-sm">
-                    +{members.length - 4}
-                  </div>
-                )}
-              </div>
+                ) : (
+                  <span
+                    key={member.participantId}
+                    className="block size-10 rounded-full bg-[#25272c] shadow-sm"
+                  />
+                ),
+              )}
+              {memberParticipants.length > visibleMembers.length && (
+                <div className="grid size-10 place-items-center rounded-full bg-[#25272c] text-[10px] font-medium text-[#f8f4ed] shadow-sm">
+                  +{memberParticipants.length - visibleMembers.length}
+                </div>
+              )}
             </div>
           </div>
         </div>
