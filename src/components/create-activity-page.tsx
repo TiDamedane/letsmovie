@@ -22,7 +22,6 @@ import { createRemoteActivityBundle } from "@/lib/supabase-activity";
 import { UserProfileDialog } from "@/components/user-profile-dialog";
 
 const titleLimit = 30;
-const noteLimit = 100;
 const rowHeight = 44;
 const currentUserName = "小杨";
 
@@ -149,7 +148,7 @@ function WheelColumn({
 export function CreateActivityPage() {
   const [step, setStep] = useState<CreateStep>("details");
   const [title, setTitle] = useState("");
-  const [note, setNote] = useState("");
+  const note = "";
   const [location, setLocation] = useState("");
   const [date, setDate] = useState("2026.07.20");
   const [selectionMode, setSelectionMode] = useState<SelectionMode | null>(
@@ -380,26 +379,32 @@ export function CreateActivityPage() {
                 </p>
               </div>
 
-              <div className="mt-9">
-                <label
-                  htmlFor="activity-note"
-                  className="block text-[14px] font-normal text-[#f8f4ed]/40"
-                >
-                  想留下些什么？
-                </label>
-                <textarea
-                  id="activity-note"
-                  value={note}
-                  maxLength={noteLimit}
-                  rows={1}
-                  onChange={(event) => setNote(event.target.value)}
-                  className="mt-1.5 h-10 w-full resize-none overflow-hidden border-0 border-b border-[#f8f4ed]/15 bg-transparent px-0 pb-2 pt-1 text-[17px] font-normal leading-7 text-[#f8f4ed]/65 outline-none placeholder:text-[#f8f4ed]/28"
-                  placeholder="写下一句想和朋友说的话"
-                />
-                <p className="mt-2 text-right text-[12px] text-[#f8f4ed]/40">
-                  {note.length} / {noteLimit}
-                </p>
-              </div>
+              {/*
+                Temporarily hidden. Restore with:
+                const noteLimit = 100;
+                const [note, setNote] = useState("");
+
+                <div className="mt-9">
+                  <label
+                    htmlFor="activity-note"
+                    className="block text-[14px] font-normal text-[#f8f4ed]/40"
+                  >
+                    想留下些什么？
+                  </label>
+                  <textarea
+                    id="activity-note"
+                    value={note}
+                    maxLength={noteLimit}
+                    rows={1}
+                    onChange={(event) => setNote(event.target.value)}
+                    className="mt-1.5 h-10 w-full resize-none overflow-hidden border-0 border-b border-[#f8f4ed]/15 bg-transparent px-0 pb-2 pt-1 text-[17px] font-normal leading-7 text-[#f8f4ed]/65 outline-none placeholder:text-[#f8f4ed]/28"
+                    placeholder="写下一句想和朋友说的话"
+                  />
+                  <p className="mt-2 text-right text-[12px] text-[#f8f4ed]/40">
+                    {note.length} / {noteLimit}
+                  </p>
+                </div>
+              */}
 
               <div className="mt-8 space-y-3">
                 <div className="flex h-[88px] w-full items-center text-left">

@@ -425,6 +425,7 @@ export function CollectingPage({
     new Map(),
   );
   const avatarCropGestureRef = useRef<AvatarCropGesture | null>(null);
+  const hasShownJoinSuccessToastRef = useRef(false);
   const inviteUrl = `${window.location.origin}${
     window.location.pathname
   }#/activity/${encodeURIComponent(activityId)}`;
@@ -549,6 +550,14 @@ export function CollectingPage({
     [],
   );
 
+  const showJoinSuccessToast = useCallback(() => {
+    if (!isSharedActivity || hasShownJoinSuccessToastRef.current) return;
+
+    hasShownJoinSuccessToastRef.current = true;
+    setIsCopyToastClosing(false);
+    setCopyToastMessage("成功加入观影局");
+  }, [isSharedActivity]);
+
   const applyRemoteBundle = useCallback((
     bundle: RemoteActivityBundle,
     remoteMemories: ActivityMemory[] = [],
@@ -641,6 +650,9 @@ export function CollectingPage({
     setRemoteParticipants((participants) =>
       mergeActivityParticipants(participants, [nextParticipant]),
     );
+    if (!storedParticipant && role === "member") {
+      showJoinSuccessToast();
+    }
     upsertRemoteParticipant({
       activityId,
       participant,
@@ -648,7 +660,14 @@ export function CollectingPage({
     }).catch(() => {
       // LocalStorage remains the fallback when cloud sync is unavailable.
     });
-  }, [activity, activityId, isSharedActivity, participant, remoteParticipants]);
+  }, [
+    activity,
+    activityId,
+    isSharedActivity,
+    participant,
+    remoteParticipants,
+    showJoinSuccessToast,
+  ]);
 
   useEffect(() => {
     let isActive = true;
@@ -1145,6 +1164,7 @@ export function CollectingPage({
           { ...nextParticipant, role: "member" },
         ]);
       }
+      showJoinSuccessToast();
     } catch {
       setParticipantError("头像上传失败了，稍后再试一次");
     } finally {
